@@ -1,0 +1,17 @@
+kind: wasmer.io/App.v0
+name: auto-story
+owner: lorentz
+package: .
+locality:
+  regions:
+    - fr-roub1
+env:
+  OPENAI_IMAGE_MODEL: gpt-image-1
+  MAX_ACTIVE_BUILDS: "2"
+capabilities:
+  memory:
+    limit: 953.7 MiB
+volumes:
+  - name: auto-story-data
+    mount: /data
+app_id: da_Ra7IetdUYBJq

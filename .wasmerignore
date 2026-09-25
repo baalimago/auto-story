@@ -1,0 +1,21 @@
+# Wasmer package filter (Git-style).
+.git/
+/test/
+/scripts/
+/README.md
+/AGENTS.md
+/CLAUDE.md
+*.webc
+/data/
+/pi/package-lock.json
+/pi/prepare.mjs
+# Only Pi itself ships; the rest are prepare-time tools.
+/pi/node_modules/*
+!/pi/node_modules/@earendil-works/
+# Pi's bundle needs Chord from its nested tree, nothing else.
+/pi/node_modules/@earendil-works/pi-coding-agent/node_modules/**
+!/pi/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/
+!/pi/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/chord/
+!/pi/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/chord/**
+/pi/node_modules/@earendil-works/pi-coding-agent/docs/
+/pi/node_modules/@earendil-works/pi-coding-agent/examples/

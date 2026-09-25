@@ -1,0 +1,22 @@
+[package]
+description = "Drop a document, get an illustrated storybook app built by Pi and deployed on Wasmer Edge"
+entrypoint = "serve"
+
+[dependencies]
+"wasmer/edgejs-quickjs" = "=0.2.0"
+"wasmer/bash" = "=1.0.25"
+
+[[command]]
+name = "serve"
+module = "wasmer/edgejs-quickjs:edge"
+runner = "wasi"
+
+[command.annotations.wasi]
+main-args = ["/app/server.mjs"]
+env = ["PATH=/bin:/usr/bin", "PORT=8080", "SSL_CERT_DIR=/etc/ssl/certs", "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"]
+
+[fs]
+"/app" = "./server"
+"/agent" = "./agent"
+"/public" = "./public"
+"/pi" = "./pi"

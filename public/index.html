@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto Story</title>
+  <meta name="description" content="Drop a document, get an illustrated interactive picture book, written by Pi and deployed on Wasmer Edge.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400&family=Caveat:wght@600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <filter id="edge"><feTurbulence type="fractalNoise" baseFrequency="0.02" numOctaves="3" seed="4"/><feDisplacementMap in="SourceGraphic" scale="22"/></filter>
+  </svg>
+
+  <header>
+    <a class="brand" href="/">Auto&nbsp;Story</a>
+    <div id="account" class="account"></div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>Drop a document.<br><em>Get a picture book.</em></h1>
+      <p class="lede">An agent reads your PDF or text, invents a gentle story world for its ideas, paints the pages,
+        and deploys the book as its own app on Wasmer Edge.</p>
+    </section>
+
+    <section id="builder" class="card">
+      <div id="gate" class="gate" hidden></div>
+
+      <label id="drop" class="drop" tabindex="0">
+        <input id="file" type="file" accept=".pdf,.txt,.md,.markdown,text/plain,application/pdf" hidden>
+        <span class="blob" aria-hidden="true"></span>
+        <span class="drop-title">Drop a PDF or text file here</span>
+        <span class="drop-sub">or click to choose one &middot; .pdf .txt .md</span>
+      </label>
+
+      <details class="paste">
+        <summary>…or paste text instead</summary>
+        <textarea id="pasted" rows="8" placeholder="Paste an article, a spec, a README, lecture notes…"></textarea>
+      </details>
+
+      <div id="doc" class="doc" hidden>
+        <div>
+          <strong id="doc-name"></strong>
+          <span id="doc-meta"></span>
+        </div>
+        <label class="title-field">Book about <input id="doc-title" maxlength="120"></label>
+        <p id="doc-preview" class="preview"></p>
+      </div>
+
+      <fieldset id="look" class="model look">
+        <legend>Look</legend>
+        <label>Style
+          <select id="look-style"></select>
+        </label>
+        <label>Colour
+          <select id="look-color">
+            <option value="color">Colour</option>
+            <option value="bw">Black &amp; white</option>
+          </select>
+        </label>
+        <label id="look-year-row" class="year">Year <output id="look-year-label"></output>
+          <input id="look-year" type="range" step="1">
+        </label>
+      </fieldset>
+
+      <fieldset id="model" class="model">
+        <legend>Model</legend>
+        <label>API
+          <select id="llm-api"></select>
+        </label>
+        <label>Base URL
+          <input id="llm-base" type="url" placeholder="https://…/v1" autocomplete="off" spellcheck="false">
+        </label>
+        <label>Model
+          <input id="llm-model" autocomplete="off" spellcheck="false">
+        </label>
+        <label>API key
+          <input id="llm-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+        </label>
+        <label id="img-row">OpenAI key for paintings <small>(optional)</small>
+          <input id="img-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+        </label>
+        <p id="art-note" class="note"></p>
+        <label class="check"><input id="remember" type="checkbox"> Remember these on this device</label>
+        <p class="note">Keys go to this app's backend for one build: they are handed to Pi and the painter, never written to disk, and forgotten when the build ends.</p>
+      </fieldset>
+
+      <div class="actions">
+        <button id="go" class="primary" disabled>Write my book</button>
+        <span id="status" class="status" role="status"></span>
+      </div>
+    </section>
+
+    <section id="progress" class="card" hidden>
+      <div class="progress-head">
+        <h2 id="progress-title">Writing your book</h2>
+        <button id="abort" class="ghost danger" type="button" hidden>Abort</button>
+      </div>
+      <ol class="stages">
+        <li data-stage="prepare">Reading</li>
+        <li data-stage="agent">Pi writes &amp; codes</li>
+        <li data-stage="check">Checking</li>
+        <li data-stage="paint">Painting</li>
+        <li data-stage="deploy">Deploying</li>
+        <li data-stage="done">Live</li>
+      </ol>
+      <div id="result" class="result" hidden></div>
+      <div class="log-head"><span>Agent log</span><span><span id="usage"></span> <span id="elapsed"></span></span></div>
+      <ol id="log" class="log" aria-live="polite"></ol>
+    </section>
+
+    <section class="gallery-wrap">
+      <h2>The shelf</h2>
+      <div id="gallery" class="gallery"><p class="empty">No books yet. Be the first.</p></div>
+    </section>
+  </main>
+
+  <footer>Pi on Wasmer Edge &middot; every book is its own app</footer>
+  <script type="module" src="app.js"></script>
+  <script src="https://watermark.wasmer.app/watermark.js?url=/powered-by-wasmer.svg&position=SE&margin=16&max-width=134&alt=Powered%20by%20Wasmer"></script>
+</body>
+</html>
