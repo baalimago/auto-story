@@ -77,6 +77,8 @@ function renderGate(message, isError = true) {
             <span class="muted">(a dedicated one you can delete afterwards)</span></li>
           <li>Paste it here. It stays in this browser and is sent with each build; the server never stores it.</li>
         </ol>
+        <p class="muted">Auto Story is an open-source Wasmer project. You can read exactly what happens to your token in
+          <a href="https://github.com/wasmerio/auto-story" target="_blank" rel="noopener">github.com/wasmerio/auto-story</a>.</p>
         <form id="token-form" class="token-form">
           <input id="wasmer-token" type="password" autocomplete="off" spellcheck="false" placeholder="wap_…" aria-label="Wasmer access token" required>
           <button class="primary signin" type="submit">Sign in</button>

@@ -234,3 +234,7 @@ footer { text-align: center; color: var(--muted); font-size: 14px; padding: 20px
 .log li.live .dur { color: var(--ink); font-weight: 700; }
 .log li.slow .dur { color: #9a6a12; font-weight: 700; }
 @media (max-width: 520px) { .log li time { display: none; } }
+.header-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+.repo { font-size: 14px; color: var(--muted); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); }
+.repo:hover { color: var(--ink); }
+footer a { color: inherit; }
