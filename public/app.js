@@ -18,7 +18,7 @@ function authHeaders(extra = {}) {
 async function api(path, options = {}) {
   const response = await fetch(path, { credentials: 'same-origin', ...options, headers: authHeaders(options.headers) });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+  if (!response.ok) throw Object.assign(new Error(body.error || `${path} answered HTTP ${response.status}`), { status: response.status, backend: Boolean(body.error) });
   return body;
 }
 
@@ -552,7 +552,15 @@ async function loadGallery() {
   }
 }
 
-loadMe().catch(error => setStatus(error.message, true));
+// Without /api/me the page has no backend: say so plainly instead of showing empty controls.
+loadMe().catch(error => {
+  const gate = $('gate');
+  gate.hidden = false;
+  gate.className = 'gate denied';
+  gate.innerHTML = `<div class="gate-body"><h3>The builder's server is not answering</h3>
+    <p>${escape(error.message)}. ${error.backend ? '' : 'This page is being served without its Node backend, so sign-in, building and your shelf cannot work. Deploy the whole app (server and all) with <code>scripts/deploy.sh</code>, which runs <code>wasmer deploy</code> with this repo\'s <code>wasmer.toml</code>; a static-site deploy of <code>public/</code> serves only this page.'}</p></div>`;
+  setStatus('');
+});
 const resume = storage(s => s.getItem('auto-story-build'));
 if (resume) { resetProgress(); follow(resume); }
 
