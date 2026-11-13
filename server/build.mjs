@@ -1,16 +1,14 @@
-// One build: document -> Pi-authored storybook -> painted backdrops -> new Wasmer Edge app.
-import { spawn } from 'node:child_process';
+// One build: document -> parts -> brief (quizzed by an examiner) -> script (reviewed by a critic)
+// -> Pi-built storybook -> painted character sheets and backdrops -> new Wasmer Edge app.
 import { randomBytes } from 'node:crypto';
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from './config.mjs';
-import { runPi, redact } from './pi_run.mjs';
-import { terminateChild } from './terminate_child.mjs';
-import { paintAll } from './paint.mjs';
+import { redact } from './pi_run.mjs';
 import { listFiles, zipDirectory } from './zip.mjs';
 import { deployZip, waitLive } from './wasmer_api.mjs';
 import { saveStory } from './stories.mjs';
-import { LIMITS, ENGINE_FILES, ART_MODES, LOOK_INSTRUCTIONS } from '../agent/limits.mjs';
+import { prepareWorkspace, createContext, runStages, archiveWork, copyDir } from './stages.mjs';
 
 const WORK_ROOT = process.env.WORK_ROOT || '/tmp/auto-story';
 const MAX_ACTIVE = Number(process.env.MAX_ACTIVE_BUILDS || 2);
@@ -25,54 +23,8 @@ export function activeBuilds() {
 export function getJob(id) { return jobs.get(id); }
 
 
-// fs.cpSync/copyFileSync fail with EACCES inside the WASIX guest.
-function copyFile(from, to) { writeFileSync(to, readFileSync(from)); }
-function copyDir(from, to) {
-  mkdirSync(to, { recursive: true });
-  for (const entry of readdirSync(from, { withFileTypes: true })) {
-    if (entry.isDirectory()) copyDir(join(from, entry.name), join(to, entry.name));
-    else if (entry.isFile()) copyFile(join(from, entry.name), join(to, entry.name));
-  }
-}
-
 export function slugify(text, max = 28) {
   return String(text).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max).replace(/-+$/, '') || 'book';
-}
-
-function runCheck(siteDir, artMode, look) {
-  return new Promise(resolve => {
-    const child = spawn(config.nodeBin, [join(config.agentDir, 'check.mjs'), siteDir, '--art', artMode, '--theme', look.theme, '--color', look.color],
-      { env: { PATH: '/bin:/usr/bin' }, stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '', err = '';
-    child.stdout.on('data', d => { out += d; });
-    child.stderr.on('data', d => { err += d; });
-    const timer = setTimeout(() => { terminateChild(child); err += '\nValidator killed after 60s'; }, 60000);
-    child.on('error', error => resolve({ ok: false, errors: [error.message] }));
-    child.on('close', () => {
-      clearTimeout(timer);
-      try { resolve(JSON.parse(out)); } catch { resolve({ ok: false, errors: [`Validator crashed: ${(err || out).slice(-800)}`] }); }
-    });
-  });
-}
-
-export function renderInput({ title, filename, chars, truncated, workDir, artMode, look }) {
-  const input = {
-    document: { title, filename, characters: chars, truncated },
-    paths: {
-      workspace: workDir,
-      document: join(workDir, 'source.txt'),
-      notebook: join(workDir, 'notes.md'),
-      site: join(workDir, 'site'),
-      engine_readme: join(config.agentDir, 'ENGINE.md'),
-      example: join(config.agentDir, 'example'),
-    },
-    commands: { check: `node ${join(config.agentDir, 'check.mjs')} site --art ${artMode} --theme ${look.theme} --color ${look.color}` },
-    art: ART_MODES[artMode],
-    look: { label: look.label, theme: look.theme, color: look.color, directive: look.directive, instructions: LOOK_INSTRUCTIONS },
-    limits: LIMITS,
-    audience: 'Curious adults who want the intuition first, told like a gentle children\'s picture book.',
-  };
-  return `INPUT\n${JSON.stringify(input, null, 2)}\n`;
 }
 
 export function startBuild({ user, title, filename, text, llm, images, wasmerToken, look }) {
@@ -122,48 +74,26 @@ export function startBuild({ user, title, filename, text, llm, images, wasmerTok
 }
 
 async function run(job, { user, title, filename, text, llm, images, wasmer, look }, emit, archive) {
-  const artMode = images ? 'painted' : 'svg';
   const workDir = join(WORK_ROOT, job.id);
+  const doc = prepareWorkspace({ workDir, title, filename, text });
+  copyDir(join(workDir, 'source'), join(archive, 'source'));
+  const artMode = images ? 'painted' : 'svg';
   const siteDir = join(workDir, 'site');
-  rmSync(workDir, { recursive: true, force: true });
-  mkdirSync(join(siteDir, 'art'), { recursive: true });
-  copyDir(join(config.agentDir, 'template'), siteDir);
-  const truncated = text.length > config.maxDocumentChars;
-  const source = truncated ? text.slice(0, config.maxDocumentChars) : text;
-  writeFileSync(join(workDir, 'source.txt'), source);
-  writeFileSync(join(workDir, 'notes.md'), `# Notes for "${title}"\n\n`);
-  const input = renderInput({ title, filename, chars: source.length, truncated, workDir, artMode, look });
-  writeFileSync(join(workDir, 'input.txt'), input);
-  writeFileSync(join(archive, 'meta.json'), JSON.stringify({ id: job.id, user: user.username, account: user.account, title, filename, chars: text.length, startedAt: job.startedAt, api: llm.api, model: llm.model, baseUrl: llm.baseUrl, artMode, look: look.label }));
-  emit({ stage: 'prepare', message: `Read ${source.length.toLocaleString('en')} characters from ${filename || 'your text'}${truncated ? ' (trimmed)' : ''}` });
+  writeFileSync(join(archive, 'meta.json'), JSON.stringify({ id: job.id, user: user.username, account: user.account, title, filename, chars: text.length, parts: doc.parts.length, mode: doc.mode, startedAt: job.startedAt, api: llm.api, model: llm.model, baseUrl: llm.baseUrl, artMode, look: look.label, lookOptions: look }));
+  emit({ stage: 'prepare', message: `Read ${doc.characters.toLocaleString('en')} characters from ${filename || 'your text'}${doc.truncated ? ' (trimmed)' : ''}, in ${doc.parts.length} part${doc.parts.length === 1 ? '' : 's'}` });
 
   const { owner } = wasmer;
   emit({ stage: 'prepare', message: `The finished book will be deployed under ${owner}` });
   emit({ stage: 'prepare', message: `Look: ${look.label}` });
-  emit({ stage: 'prepare', message: images ? `Backdrops will be painted with ${images.model}` : 'No image key: Pi will draw the backdrops as SVG' });
+  emit({ stage: 'prepare', message: images ? `Character sheets and backdrops will be painted with ${images.model}` : 'No image key: Pi will draw the characters and backdrops as SVG' });
 
   const signal = job.controller.signal;
-  const stop = () => { if (signal.aborted) throw new Error('Aborted'); };
-  const pi = await runPi({
-    workDir, systemPath: join(config.agentDir, 'system.md'), inputPath: join(workDir, 'input.txt'),
-    logPath: join(archive, 'pi.ndjson'), onEvent: emit, signal, llm, usage: job.usage,
-  });
-  archiveWork(workDir, archive);
-  stop();
-  if (!pi.ok) throw new Error(pi.timedOut ? 'Pi ran out of time' : 'Pi did not finish the book');
-
-  for (const file of ENGINE_FILES.filter(f => f !== 'index.html')) copyFile(join(config.agentDir, 'template', file), join(siteDir, file));
-  emit({ stage: 'check', message: 'Checking the book' });
-  const report = await runCheck(siteDir, artMode, look);
-  writeFileSync(join(archive, 'check.json'), JSON.stringify(report, null, 2));
-  if (!report.ok) throw new Error(`The book failed its checks: ${report.errors.slice(0, 4).join('; ')}`);
-  emit({ stage: 'check', message: `Book passes: ${report.pages} pages, ${report.images} backdrops${report.warnings.length ? `, ${report.warnings.length} warnings` : ''}` });
-
+  const ctx = createContext({ workDir, archive, emit, signal, llm, images, look, usage: job.usage });
+  const results = await runStages(ctx);
+  const report = results.build, painted = results.paint;
+  const pi = { final: report.final };
   const bookTitle = String(pi.final?.title || title).slice(0, 120);
-  stop();
-  const painted = images ? await paintAll(siteDir, images, look, emit, { signal, usage: job.usage }) : { painted: [], failed: [] };
-  stop();
-  if (images && !painted.painted.length) emit({ stage: 'paint', level: 'warn', message: 'No backdrops were painted; the book will use its watercolor fallbacks' });
+  if (signal.aborted) throw new Error('Aborted');
 
   const files = listFiles(siteDir);
   const zip = zipDirectory(siteDir, files);
@@ -194,13 +124,6 @@ function unguessable(length = 10) {
   return [...randomBytes(length)].map(b => alphabet[b % alphabet.length]).join('');
 }
 
-function archiveWork(workDir, archive) {
-  try {
-    if (existsSync(join(workDir, 'notes.md'))) copyFile(join(workDir, 'notes.md'), join(archive, 'notes.md'));
-    if (existsSync(join(workDir, 'input.txt'))) copyFile(join(workDir, 'input.txt'), join(archive, 'input.txt'));
-    copyDir(join(workDir, 'site'), join(archive, 'site'));
-  } catch (error) { console.warn(`Archive failed: ${error.message}`); }
-}
 
 // Who started a build: from memory, or from the archive when it ran on another instance.
 function buildAccount(id) {

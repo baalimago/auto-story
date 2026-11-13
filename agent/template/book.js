@@ -122,8 +122,9 @@ function renderPage(page, index, story) {
   }
 
   if (kind === 'cast') {
+    const portrait = c => c.art ? `<img class="portrait" src="art/${escape(c.art)}.${escape(story.artExtension || 'webp')}" alt="" loading="lazy" onerror="this.remove()">` : '';
     const rows = (story.cast || []).map(c =>
-      `<dt>${escape(c.name)}<small>${escape(c.is)}</small></dt><dd>${prose(c.explain)}</dd>`).join('');
+      `<dt>${portrait(c)}${escape(c.name)}<small>${escape(c.is)}</small></dt><dd>${prose(c.explain)}</dd>`).join('');
     section.innerHTML = `<div class="sheet"><h2>${escape(page.title || 'Who is who')}</h2><dl>${rows}</dl>
       <p class="made">${escape(story.colophon || 'Written by an agent, painted by a machine, served from the edge.')}</p></div>`;
     return section;

@@ -225,7 +225,17 @@ if (!errors.length) {
   if (plan) {
     const images = Array.isArray(plan.images) ? plan.images : [];
     if (typeof plan.style !== 'string' || plan.style.length < 40) fail('art/plan.json: style must describe the shared look (40+ chars)');
-    if (typeof plan.characters !== 'string' || plan.characters.length < 40) fail('art/plan.json: characters must describe every recurring character (40+ chars)');
+    const characters = Array.isArray(plan.characters) ? plan.characters : [];
+    if (characters.length < LIMITS.minCharacters || characters.length > LIMITS.maxCharacters)
+      fail(`art/plan.json: characters must list ${LIMITS.minCharacters}-${LIMITS.maxCharacters} recurring characters as { id, name, look }`);
+    const charIds = new Set();
+    for (const c of characters) {
+      if (!/^[a-z0-9-]{1,32}$/.test(c?.id || '')) fail(`art/plan.json: bad character id ${JSON.stringify(c?.id)}`);
+      if (charIds.has(c?.id)) fail(`art/plan.json: duplicate character id ${c.id}`);
+      charIds.add(c?.id);
+      if (typeof c?.name !== 'string' || !c.name.trim()) fail(`art/plan.json: character ${c?.id} needs a name`);
+      if (typeof c?.look !== 'string' || c.look.length < 60) fail(`art/plan.json: character ${c?.id} needs a full visual look (60+ chars)`);
+    }
     if (!images.length || images.length > LIMITS.maxImages) fail(`art/plan.json: need 1-${LIMITS.maxImages} images, found ${images.length}`);
     const ids = new Set();
     for (const image of images) {
@@ -233,12 +243,17 @@ if (!errors.length) {
       if (ids.has(image.id)) fail(`art/plan.json: duplicate image id ${image.id}`);
       ids.add(image.id);
       if (typeof image.prompt !== 'string' || image.prompt.length < LIMITS.minPromptChars) fail(`art/plan.json: image ${image.id} prompt is too short`);
+      if (image.characters !== undefined && !Array.isArray(image.characters)) fail(`art/plan.json: image ${image.id} characters must be a list of character ids`);
+      for (const c of image.characters || []) if (!charIds.has(c)) fail(`art/plan.json: image ${image.id} lists unknown character ${c}`);
+    }
+    for (const c of story?.cast || []) {
+      if (c?.art && !(c.art.startsWith('char-') && charIds.has(c.art.slice(5)))) fail(`cast ${c.name}: art must be "char-<id>" of a plan character`);
     }
     const used = new Set((story?.pages || []).map(p => p.art).filter(Boolean));
     for (const id of ids) if (!used.has(id)) warnings.push(`image ${id} is planned but unused`);
     if (artMode === 'svg') {
       if (story?.artExtension !== 'svg') fail("story.artExtension must be 'svg' when you draw the backdrops");
-      for (const id of ids) {
+      for (const id of [...ids, ...[...charIds].map(c => `char-${c}`)]) {
         const file = join(site, 'art', `${id}.svg`);
         if (!existsSync(file)) { fail(`missing art/${id}.svg`); continue; }
         const svg = readFileSync(file, 'utf8');
@@ -266,6 +281,17 @@ const report = {
   pages: story?.pages?.length ?? 0,
   images: plan?.images?.length ?? 0,
   cover: story?.pages?.[0]?.art ?? null,
+  // Where the words sit on each backdrop, so the painter keeps that part calm.
+  sides: (story?.pages || []).reduce((sides, page, index) => {
+    if (!page?.art) return sides;
+    // book.js rules: it inserts a "learn" page after the cover, and alternates sides by rendered index.
+    const shift = index > 0 && (story.ideas || []).length && !story.pages.some(p => p.kind === 'learn') ? 1 : 0;
+    let side = page.side || ((index + shift) % 2 ? 'right' : 'left');
+    if ((page.widget || page.scene) && side === 'bottom') side = 'right';
+    sides[page.art] = [...new Set([...(sides[page.art] || []), side])];
+    return sides;
+  }, {}),
+  characters: Array.isArray(plan?.characters) ? plan.characters.length : 0,
   artMode,
   theme,
   colorMode,

@@ -48,7 +48,7 @@ export default {
       note: 'The precise explanation with `real_terms` and **key ideas**.',
     },
   ],
-  cast: [ { name: 'Old Owl', is: 'The DNS resolver', explain: 'One or two sentences.' } ],
+  cast: [ { name: 'Old Owl', is: 'The DNS resolver', explain: 'One or two sentences.', art: 'char-owl' } ],
   colophon: 'One closing line for the last page.',
 };
 ```
@@ -138,12 +138,19 @@ Name the real concept only in the note and in the cast list.
 ```json
 {
   "style": "Starts with INPUT.look.directive, then what is specific to this book.",
-  "characters": "Olive: a small brown otter with a yellow satchel. Bram: an old heron with round glasses.",
+  "characters": [
+    { "id": "olive", "name": "Olive", "look": "A small brown otter, about knee high, with a cream belly, a yellow canvas satchel across her chest and a red scarf." },
+    { "id": "bram", "name": "Bram", "look": "A tall old grey heron with round brass glasses and a long blue waistcoat with three buttons." }
+  ],
   "images": [
-    { "id": "cover", "prompt": "Olive and Bram on a river bank at dawn, wide view, the right third is open misty water." }
+    { "id": "cover", "characters": ["olive", "bram"], "prompt": "Olive and Bram on a river bank at dawn, wide view, the right third is open misty water." }
   ]
 }
 ```
 
-Every id becomes one backdrop at `art/<id>.<artExtension>`: painted by
-the coordinator, or drawn by you, as INPUT.art says.
+Every character becomes one model sheet at `art/char-<id>.<artExtension>`,
+and every image one backdrop at `art/<id>.<artExtension>`: painted by the
+coordinator, or drawn by you, as INPUT.art says. Backdrops are painted from
+the model sheets of the characters they list, so characters stay the same on
+every page. Set `art: 'char-<id>'` on a cast entry to show its model sheet on
+the cast page.

@@ -141,6 +141,7 @@ body {
 .page.cast h2 { font-family: var(--hand-font); font-size: 2.6em; margin: 0 0 .4em; }
 .page.cast dl { display: grid; grid-template-columns: minmax(8em, 1fr) 2.6fr; gap: .7em 1.4em; margin: 0; }
 .page.cast dt { font-family: var(--hand-font); font-size: 1.35em; font-weight: 700; }
+.page.cast dt .portrait { display: block; width: 6.5em; height: 6.5em; object-fit: cover; object-position: 50% 15%; border-radius: 50%; margin-bottom: .3em; box-shadow: 0 0 0 3px var(--paper), 0 0 0 4px color-mix(in srgb, var(--ink) 25%, transparent); }
 .page.cast dt small { display: block; font-family: var(--story-font); font-size: .6em; font-weight: 400; opacity: .7; }
 .page.cast dd { margin: 0; line-height: 1.45; }
 .page.cast .made { margin-top: 2em; opacity: .7; font-size: .85em; font-style: italic; }

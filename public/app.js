@@ -1,5 +1,5 @@
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/6.3.289';
-const STAGES = ['prepare', 'agent', 'check', 'paint', 'deploy', 'done'];
+const STAGES = ['prepare', 'understand', 'script', 'build', 'check', 'paint', 'deploy', 'done'];
 const $ = id => document.getElementById(id);
 const state = { me: null, wasmer: null, doc: null, buildId: null, started: 0, timer: null };
 
@@ -342,7 +342,7 @@ function logEvent(event) {
     const label = event.kind === 'stderr' ? 'stderr' : `↳ ${event.kind === 'tool-error' ? 'error' : 'output'}${event.lines ? ` · ${event.lines} line${event.lines === 1 ? '' : 's'}` : ''}`;
     li.innerHTML = `<details${event.kind === 'tool-error' ? ' open' : ''}><summary><span class="tag"></span>${escape(label)}</summary><pre>${escape(event.message)}</pre></details>`;
   } else {
-    const tag = event.kind === 'tool' ? event.tool : event.kind === 'message' ? 'pi' : event.stage;
+    const tag = event.kind === 'tool' ? event.tool : event.kind === 'message' ? (event.role || 'pi').toLowerCase() : event.stage;
     li.innerHTML = `<span class="tag">${escape(tag)}</span><span class="text">${escape(event.message)}</span>`;
   }
   if (event.at) {

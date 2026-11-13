@@ -1,7 +1,7 @@
 export const LIMITS = {
   minPages: 8,
   maxPages: 14,
-  maxTextChars: 280,
+  maxTextChars: 320,
   maxImages: 12,
   minInteractions: 3,
   maxFreeformScenes: 2,
@@ -10,7 +10,23 @@ export const LIMITS = {
   minCast: 3,
   minPromptChars: 60,
   maxNoteChars: 900,
+  minCharacters: 2,
+  maxCharacters: 5,
 };
+
+// Limits for the understanding and script stages (agent/check_plan.mjs).
+export const PLAN_LIMITS = {
+  minConcepts: 3,
+  maxConcepts: 6,
+  minQuoteChars: 20,
+  maxQuoteChars: 400,
+  minExamQuestions: 10,
+  maxFailedQuestions: 1,
+};
+
+export const AUDIENCE = 'Children aged 10 to 12 who are curious and bright but know nothing about the topic. '
+  + 'Use words they know, short sentences, and concrete pictures; name a real term only in notes for grown-ups. '
+  + 'Grown-ups read along, so the notes may be precise.';
 
 export const ENGINE_FILES = ['index.html', 'book.js', 'book.css', 'widgets.js', 'powered-by-wasmer.svg'];
 export const AUTHORED_FILES = ['story.js', 'scenes.js', 'story.css', 'art/plan.json'];
@@ -23,7 +39,9 @@ export const ART_MODES = {
     mode: 'painted',
     instructions: [
       'The coordinator paints every art/plan.json image after you finish, landscape 3:2.',
-      'It prepends INPUT.look.directive, plan.style and plan.characters to each prompt, so a prompt only describes its own scene.',
+      'It first paints one model sheet per plan.characters entry, then paints every backdrop from those sheets, so the characters look the same on every page.',
+      'It prepends INPUT.look.directive, plan.style and the looks of the characters an image lists to each prompt, so a prompt only describes its own scene.',
+      'List in each image\'s characters every character id that appears in it; leave the list empty for a scene without characters.',
       'Describe composition only. Keep the words side of that page calm and mostly empty.',
       'Ask for no text, letters, labels, or numbers inside backdrops.',
       'Leave story.artExtension unset.',
@@ -33,6 +51,7 @@ export const ART_MODES = {
     mode: 'svg',
     instructions: [
       'No image model is available. Draw every art/plan.json image yourself as site/art/<id>.svg.',
+      'Draw each plan.characters entry once first, as site/art/char-<id>.svg: one full-body figure on a plain background. Then paste that same drawing (only moved, scaled or flipped) into every backdrop that lists the character, so it looks identical on every page.',
       'Use viewBox="0 0 1500 1000" and draw in the idiom of INPUT.look, with the story palette.',
       'Reference the page filters url(#wc-wash) and url(#wc-edge) only inside inline SVG scenes; backdrop files must define their own filters.',
       'Give each backdrop the texture of its look: a feTurbulence edge for watercolor, halftone dot patterns for comics, line hatching or screentone patterns for manga.',

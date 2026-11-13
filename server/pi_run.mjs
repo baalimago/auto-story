@@ -24,7 +24,7 @@ function toolSummary(name, args = {}, workDir = '') {
   return JSON.stringify(args).slice(0, 300);
 }
 
-export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal, llm, usage }) {
+export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal, llm, usage, stage = 'agent', role = 'Pi', timeoutSeconds = config.piTimeoutSeconds }) {
   const home = join(workDir, '.home');
   mkdirSync(home, { recursive: true });
   mkdirSync(join(workDir, '.tmp'), { recursive: true });
@@ -43,13 +43,13 @@ export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal
   const summary = { bashCalls: 0, successfulBashCalls: 0, messages: 0, ended: false, failed: false, lastText: '' };
   const tools = new Map();
   const emit = event => {
-    const clean = { ...event, message: redact(event.message ?? '', [llm.apiKey]).slice(0, MAX_EVENT_TEXT) };
+    const clean = { ...event, stage, role, message: redact(event.message ?? '', [llm.apiKey]).slice(0, MAX_EVENT_TEXT) };
     appendFileSync(logPath, JSON.stringify({ at: new Date().toISOString(), ...clean }) + '\n');
     onEvent(clean);
   };
 
   function handle(event) {
-    if (event.type === 'agent_start') emit({ stage: 'agent', kind: 'start', message: `Pi started with ${llm.model} (${llm.api})` });
+    if (event.type === 'agent_start') emit({ stage: 'agent', kind: 'start', message: `${role} started with ${llm.model} (${llm.api})` });
     if (event.type === 'tool_execution_start') {
       tools.set(event.toolCallId, event.toolName);
       if (event.toolName === 'bash') summary.bashCalls++;
@@ -82,7 +82,7 @@ export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal
         emit({ stage: 'agent', kind: 'error', level: 'error', message: event.message.errorMessage || event.message.stopReason });
       }
     }
-    if (event.type === 'agent_end') { summary.ended = true; emit({ stage: 'agent', kind: 'done', message: 'Pi finished' }); }
+    if (event.type === 'agent_end') { summary.ended = true; emit({ stage: 'agent', kind: 'done', message: `${role} finished` }); }
   }
 
   return new Promise(resolve => {
@@ -94,11 +94,11 @@ export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal
     let lastActivity = Date.now();
     const timer = setTimeout(() => {
       timedOut = true;
-      emit({ stage: 'agent', kind: 'error', level: 'error', message: 'Pi reached its time limit' });
+      emit({ stage: 'agent', kind: 'error', level: 'error', message: `${role} reached its time limit` });
       terminateChild(child);
-    }, config.piTimeoutSeconds * 1000);
+    }, timeoutSeconds * 1000);
     const heartbeat = setInterval(() => {
-      if (Date.now() - lastActivity > 25000) emit({ stage: 'agent', kind: 'heartbeat', message: 'Pi is thinking…' });
+      if (Date.now() - lastActivity > 25000) emit({ stage: 'agent', kind: 'heartbeat', message: `${role} is thinking…` });
     }, 25000);
     const abort = () => { summary.failed = true; summary.aborted = true; terminateChild(child); };
     signal?.addEventListener('abort', abort, { once: true });

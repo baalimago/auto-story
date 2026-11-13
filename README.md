@@ -1,8 +1,9 @@
 # Auto Story
 
-Drop a PDF or a text document. Pi reads it, invents a gentle picture-book
-world for its ideas, writes an interactive storybook site, and the builder
-paints the pages and deploys the book as a **new Wasmer Edge app**.
+Drop a PDF or a text document. Pi reads all of it, writes a checked brief
+of its core concepts, scripts a picture book for 10-12 year olds around
+them, builds an interactive storybook site, and the builder paints the
+characters and pages and deploys the book as a **new Wasmer Edge app**.
 
 ```
  browser                         auto-story (Edge app, Edge.js)                      Wasmer / OpenAI
@@ -13,11 +14,53 @@ paints the pages and deploys the book as a **new Wasmer Edge app**.
                                  │     writes story.js, scenes.js, art/plan.json
                                  │     runs node /agent/check.mjs until ok
                                  │  check again (no secrets in env)
-                                 │  paint art/plan.json (or Pi draws SVG) ───────► OpenAI Images
+                                 │  paint character sheets, then backdrops from them ► OpenAI Images
+                                 │     (or Pi draws SVG)
                                  │  zip site/ → signed upload → deployViaAutobuild ─► registry.wasmer.io
                                  │  poll build, wait for x-edge-app-version-id
  "Open the book →" ◄─────────────┘  gallery entry → /data/stories/<id>.json
 ```
+
+## The pipeline
+
+Garbage in, garbage out: the earlier a mistake is caught, the better the
+book. So the build is a chain of short, separate Pi sessions
+(`server/stages.mjs`), each with its own prompt in `agent/prompts/`. Each
+one reads only files in the workspace, and the reviewers get a fresh
+session so they judge the files, not the author's reasoning.
+
+| Stage | Agents | Reads | Writes | Gate |
+|---|---|---|---|---|
+| prepare | – | the upload | `source/part-NN.txt`, `workspace.json` | – |
+| understand | analyst, then examiner | every part (or `digests/` for huge documents) | `brief.json`, `reviews/brief-N.json` | `check_plan.mjs --stage brief`: every quote is found verbatim in the part it names, and every part is covered |
+| script | writer, then critic | `brief.json` | `script.json`, `reviews/script-N.json` | `--stage script`: every core concept taught, characters have full looks, interactions planned |
+| build | builder | `script.json`, `brief.json` | `site/`, `check.json` | `check.mjs` |
+| paint | – | `site/art/plan.json`, `check.json` | `site/art/char-<id>.webp`, `site/art/<id>.webp` | – |
+
+- **Whole document.** The document is split into parts of at most 24k
+  characters. The analyst must read every part and prove it in
+  `brief.coverage` with a quote per part. Documents longer than
+  `SINGLE_PASS_CHARS` (default 400k, about 100k tokens) are first digested
+  part by part by separate readers, each digest also quote-checked.
+- **Adversarial reviews.** The examiner asks at least ten child and expert
+  questions of the brief and answers each from the brief and from the
+  document; the critic first reads only the page texts, as a 10-12 year old,
+  and must be able to explain every core concept from them. A review that
+  says `revise` sends the file back to its author, up to `REVIEW_ROUNDS`
+  (default 2) times.
+- **Characters.** The script fixes a visual model for each character. The
+  painter paints one model sheet per character first, then paints every
+  backdrop with the images edits endpoint, passing the sheets of the
+  characters in it as references, so they look the same on every page. The
+  sheets also appear on the cast page. Prompts tell the painter which side
+  of each backdrop the words sit on, so it stays calm.
+- **Re-running.** `runStages(ctx, { from, to })` re-runs from any stage on
+  an existing workspace; `ctx.notes` passes the owner's free-text request to
+  the authoring agents as `INPUT.owner_notes`.
+
+Everything above is archived to `/data/builds/<id>/` with the Pi logs.
+`node test/stages.mjs` and `node test/pipeline.mjs` test the validators,
+the painter and the whole chain offline, with a scripted stand-in for Pi.
 
 ## The book format
 
@@ -28,8 +71,9 @@ the engine (`agent/template/`), and Pi writes the rest.
 |---|---|---|
 | `story.js` | Pi | Title, palette, pages (text, art id, scene, grown-up note), cast list |
 | `scenes.js` | Pi | Interactive SVG scenes on a 1500×1000 layer over the backdrop |
-| `art/plan.json` | Pi | Shared style, character sheet, one prompt per backdrop |
-| `art/*.webp` | Builder | Painted with `OPENAI_IMAGE_MODEL`, 1536×1024, when an OpenAI key is available |
+| `art/plan.json` | Pi | Shared style, characters (`id`, `name`, `look`), one prompt per backdrop with the characters in it |
+| `art/char-*.webp` | Builder | One model sheet per character, 1024×1024 |
+| `art/*.webp` | Builder | Painted with `OPENAI_IMAGE_MODEL`, 1536×1024, from the character sheets, when an OpenAI key is available |
 | `art/*.svg` | Pi | Drawn by Pi when there is no image key (`artExtension: 'svg'`) |
 
 Every book and the builder carry a "powered by Wasmer" badge through
@@ -121,6 +165,10 @@ malicious document that talks Pi into printing its environment.
 | `OPENAI_IMAGE_MODEL` | env | Default `gpt-image-1`. `OPENAI_IMAGE_QUALITY` defaults to `medium`. |
 | `STORY_OWNER` | env | Optional namespace for books instead of the visitor's own account. |
 | `MAX_ACTIVE_BUILDS` | env | Per instance, default 2. |
+| `PI_TIMEOUT_SECONDS` | env | Per agent session, default 1500. |
+| `MAX_DOCUMENT_CHARS` | env | Longer documents are trimmed, default 1,500,000. |
+| `SINGLE_PASS_CHARS` | env | Longer documents are digested part by part first, default 400,000. |
+| `REVIEW_ROUNDS` | env | Revisions the examiner and critic may ask for, default 2. |
 
 ## Run locally
 
