@@ -224,7 +224,7 @@ stream like builds.
 
 | Name | Kind | Purpose |
 |---|---|---|
-| `OPENAI_IMAGE_MODEL` | env | Default `gpt-image-1`. `OPENAI_IMAGE_QUALITY` defaults to `medium`. |
+| `OPENAI_IMAGE_MODEL` | env | Comma-separated preference, default `gpt-image-2.6-sunburst,gpt-image-2.6-flare,gpt-image-2.5-sunburst,gpt-image-2.5-flare,gpt-image-1.5,gpt-image-1`. Each build takes the first one the key lists (or the newest `gpt-image*` it lists), and the form's Image model field goes first. `OPENAI_IMAGE_QUALITY` defaults to `medium`. |
 | `STORY_OWNER` | env | Optional namespace for books instead of the visitor's own account. |
 | `MAX_ACTIVE_BUILDS` | env | Per instance, default 2. |
 | `PI_TIMEOUT_SECONDS` | env | Per agent session, default 1500. |

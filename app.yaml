@@ -6,7 +6,6 @@ locality:
   regions:
     - fr-roub1
 env:
-  OPENAI_IMAGE_MODEL: gpt-image-1
   MAX_ACTIVE_BUILDS: "2"
 capabilities:
   memory:
