@@ -1,0 +1,12 @@
+{
+  "name": "auto-story",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Drop a document, get an illustrated storybook app built by Pi and deployed on Wasmer Edge",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/prepare-pi.mjs",
+    "start": "node server/server.mjs",
+    "test": "node test/stages.mjs && node test/pipeline.mjs && node test/edit.mjs && node test/private_shelf.mjs"
+  }
+}

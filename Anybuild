@@ -1,0 +1,27 @@
+# How Wasmer's Git deploys build and serve auto-story (https://github.com/wasmerio/anybuild).
+# Without this file Anybuild sees public/index.html and serves the front end as a static site,
+# so the Node server, and with it sign-in, building and the shelf, never runs.
+# `scripts/deploy.sh` (wasmer deploy with wasmer.toml) is the other way to deploy; both run server/server.mjs.
+
+load("//anybuild/tools:node.bzl", "node_build", "node_config", "node_serve")
+
+config = node_config(
+    schema = 1,
+    commands = {
+        "start": "node server/server.mjs",
+    },
+    node_package_manager = "npm",
+    node_server = "node",
+    node_version = "24",
+    npm_version = "11",
+    # Installs and trims Pi into pi/node_modules (scripts/prepare-pi.mjs).
+    node_build_command = "npm run build",
+    # Pi's bundle is large and already rewritten for QuickJS; skip the ahead-of-time bytecode pass.
+    edgejs_precompile = False,
+    # Pi's bash tool runs the validators.
+    extra_dependencies = ["bash"],
+)
+
+build = node_build(config)
+
+node_serve(config, build, name = "auto-story")

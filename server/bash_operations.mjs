@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { terminateChild } from './terminate_child.mjs';
+
+const BASH = process.env.BASH_BIN || ['/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash'].find(p => existsSync(p)) || 'bash';
 
 // WASIX supports child processes but not detached process groups.
 const DEFAULT_TIMEOUT_SECONDS = 120;
@@ -9,7 +12,7 @@ export function createBashOperations(onTimeout = () => {}) {
     exec(command, cwd, { onData, signal, timeout = DEFAULT_TIMEOUT_SECONDS, env }) {
       return new Promise((resolve, reject) => {
         if (signal?.aborted) return reject(new Error('Bash command aborted'));
-        const child = spawn('/bin/bash', ['-c', command], {
+        const child = spawn(BASH, ['-c', command], {
           cwd, env, detached: false, stdio: ['ignore', 'pipe', 'pipe'],
         });
         let failure;

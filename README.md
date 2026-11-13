@@ -229,11 +229,21 @@ against a fake registry.
 
 ## Deploy
 
-```bash
-scripts/deploy.sh
-```
+Two ways, both run `server/server.mjs`:
 
-It prepares Pi, size-checks the package and runs `wasmer deploy`.
+- **Git deploys** (pushing to master when the Wasmer app is connected to the
+  repo). Wasmer builds with [Anybuild](https://github.com/wasmerio/anybuild),
+  which reads the root `Anybuild` file: a Node app on Edge.js (QuickJS) plus
+  bash, whose `npm run build` installs and trims Pi
+  (`scripts/prepare-pi.mjs`). Without that file Anybuild sees
+  `public/index.html` and deploys a static site, and the page then reports
+  that its server is not answering.
+- **`scripts/deploy.sh`** from a checkout. It prepares Pi, size-checks the
+  package and runs `wasmer deploy` with `wasmer.toml`.
+
+The server finds its files either way: `/public`, `/agent` and `/pi` under
+`wasmer.toml`, or `public/`, `agent/` and `pi/` next to `server/` when the
+repo runs in place (`server/config.mjs`).
 
 ## Runtime notes
 

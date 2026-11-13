@@ -35,7 +35,7 @@ const readJson = file => JSON.parse(readFileSync(file, 'utf8'));
 function runNode(script, args) {
   return new Promise(resolve => {
     const child = spawn(config.nodeBin, [join(config.agentDir, script), ...args],
-      { env: { PATH: '/bin:/usr/bin' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      { env: { PATH: config.childPath }, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     child.stdout.on('data', d => { out += d; });
     child.stderr.on('data', d => { err += d; });

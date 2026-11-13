@@ -1,6 +1,6 @@
 // Runs Pi in a child process and turns its JSON event lines into build events.
 import { spawn } from 'node:child_process';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from './config.mjs';
 import { terminateChild } from './terminate_child.mjs';
@@ -29,7 +29,7 @@ export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal
   mkdirSync(home, { recursive: true });
   mkdirSync(join(workDir, '.tmp'), { recursive: true });
   const env = {
-    PATH: '/bin:/usr/bin',
+    PATH: config.childPath,
     HOME: home,
     TMPDIR: join(workDir, '.tmp'),
     PI_CODING_AGENT_DIR: join(home, '.pi'),
@@ -37,8 +37,9 @@ export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal
     PI_MODEL: llm.model,
     PI_BASE_URL: llm.baseUrl || '',
     [llm.api === 'anthropic-messages' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY']: llm.apiKey,
-    SSL_CERT_DIR: '/etc/ssl/certs',
-    SSL_CERT_FILE: '/etc/ssl/certs/ca-bundle.crt',
+    ...(existsSync('/etc/ssl/certs') ? { SSL_CERT_DIR: '/etc/ssl/certs' } : {}),
+    ...(existsSync('/etc/ssl/certs/ca-bundle.crt') ? { SSL_CERT_FILE: '/etc/ssl/certs/ca-bundle.crt' } : {}),
+    ...(process.env.SSL_CERT_FILE && !existsSync('/etc/ssl/certs/ca-bundle.crt') ? { SSL_CERT_FILE: process.env.SSL_CERT_FILE } : {}),
   };
   const summary = { bashCalls: 0, successfulBashCalls: 0, messages: 0, ended: false, failed: false, lastText: '' };
   const tools = new Map();

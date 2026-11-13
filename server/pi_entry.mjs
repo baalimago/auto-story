@@ -1,6 +1,11 @@
 import { readFileSync, writeSync } from 'node:fs';
-import { createAgentSession, createBashToolDefinition, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager }
-  from '/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/index.js';
+import { existsSync } from 'node:fs';
+// /pi under wasmer.toml; ../pi or ../node_modules when the repo runs in place (anybuild Node deploys).
+const PI_BUNDLE = 'node_modules/@earendil-works/pi-coding-agent/dist/bundle/index.js';
+const piBundle = [process.env.PI_DIR && `${process.env.PI_DIR}/${PI_BUNDLE}`, `/pi/${PI_BUNDLE}`,
+  new URL(`../pi/${PI_BUNDLE}`, import.meta.url).pathname, new URL(`../${PI_BUNDLE}`, import.meta.url).pathname].find(p => p && existsSync(p));
+if (!piBundle) throw new Error('Pi is not installed: run npm ci --prefix pi');
+const { createAgentSession, createBashToolDefinition, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } = await import(piBundle);
 import { createBashOperations } from './bash_operations.mjs';
 
 const bashOperations = createBashOperations(error => {
