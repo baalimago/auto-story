@@ -207,7 +207,7 @@ async function runTweak({ job, user, story, base, tweak, llm, images, emit, arch
     for (const image of newPlan.images || []) if ((image.characters || []).some(c => sets.sheets.has(c))) sets.images.add(image.id);
     const count = sets.sheets.size + sets.images.size;
     if (!count) emit({ stage: 'paint', message: 'No picture needs repainting' });
-    else if (!images) emit({ stage: 'paint', level: 'warn', message: `${count} picture${count === 1 ? '' : 's'} changed, but there is no OpenAI key for paintings; keeping the old ones` });
+    else if (!images) emit({ stage: 'paint', level: 'warn', message: `${count} picture${count === 1 ? '' : 's'} changed or missing, but there is no OpenAI key for paintings; keeping the old ones` });
     else {
       emit({ stage: 'paint', message: `Repainting ${[...sets.sheets].map(c => `char-${c}`).concat([...sets.images]).join(', ')}` });
       ctx.only = sets;
@@ -217,7 +217,7 @@ async function runTweak({ job, user, story, base, tweak, llm, images, emit, arch
   }
   if (signal.aborted) throw new Error('Aborted');
 
-  const deployed = await deploySite({ siteDir, appName: story.appName, owner: story.owner, token, emit, signal });
+  const deployed = await deploySite({ siteDir, appName: story.appName, owner: story.owner, token, emit, signal, artMode: ctx.artMode });
   const changed = [tweak.brief && 'brief', tweak.script && 'script', tweak.from && 'book'].filter(Boolean);
   const usage = { ...job.usage, tokens: job.usage.input + job.usage.output + job.usage.cacheRead + job.usage.cacheWrite, cost: Math.round(job.usage.cost * 10000) / 10000 };
   const version = saveVersion(id, workDir, { kind: 'tweak', by: user.username, job: job.id, base, message: tweak.message, from: tweak.from, changed, repainted, url: deployed.url, usage });
@@ -246,7 +246,7 @@ export function startRollback({ user, wasmerToken, id, version }) {
       writeMeta(archive, job, user, story, { kind: 'rollback', base: board.version, to: n });
       emit({ stage: 'prepare', message: `Rolling back to version ${n}` });
       const signal = job.controller.signal;
-      const deployed = await deploySite({ siteDir: join(versionDir(id, n), 'site'), appName: story.appName, owner: story.owner, token: wasmer.token, emit, signal });
+      const deployed = await deploySite({ siteDir: join(versionDir(id, n), 'site'), appName: story.appName, owner: story.owner, token: wasmer.token, emit, signal, artMode: story.artMode === 'svg' ? 'svg' : 'painted' });
       const old = listVersions(id).find(v => v.n === n);
       const saved = copyVersion(id, n, { kind: 'rollback', by: user.username, job: job.id, base: board.version, to: n, message: `Back to version ${n}${old?.message ? ` (${old.message.slice(0, 80)})` : ''}`, url: deployed.url });
       const script = readJson(join(versionDir(id, saved.n), 'work', 'script.json'), {});

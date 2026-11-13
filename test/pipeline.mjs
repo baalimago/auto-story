@@ -95,21 +95,35 @@ out({ type: 'agent_end' });
 `);
 
 const images = [];
+let refuseImages = false;
 const server = createServer((req, res) => {
   req.resume();
-  req.on('end', () => { images.push(req.url); res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ data: [{ b64_json: Buffer.from('img').toString('base64') }] })); });
+  req.on('end', () => {
+    images.push(req.url);
+    res.setHeader('content-type', 'application/json');
+    if (refuseImages) { res.statusCode = 403; return res.end(JSON.stringify({ error: { message: 'Your organization must be verified to use this model' } })); }
+    res.end(JSON.stringify({ data: [{ b64_json: Buffer.from('img').toString('base64') }] }));
+  });
 });
 await new Promise(ok => server.listen(0, ok));
 Object.assign(process.env, { DATA_DIR: join(tmp, 'data'), AGENT_DIR: join(tmp, 'agent'), NODE_BIN: process.execPath, WORK_ROOT: join(tmp, 'work'), WASMER_REGISTRY_URL: 'http://127.0.0.1:9/graphql' });
 const { startBuild } = await import(join(app, 'build.mjs'));
-const job = startBuild({
-  user: { username: 'tester', account: 'acct-1' }, title: 'Raft', filename: 'raft.md', text: raft,
-  llm: { api: 'openai-responses', model: 'fake', apiKey: 'sk-fake-1234567890' },
-  images: { baseUrl: `http://127.0.0.1:${server.address().port}`, apiKey: 'k-fake-1234567890', model: 'gpt-image-1' },
-  wasmerToken: 'wap_fake_1234567890', look: { theme: 'watercolor', color: 'color', label: 'test', directive: 'watercolor' },
-});
-const events = [];
-await new Promise(done => job.listeners.add(e => { if (e) events.push(e); else done(); }));
+const build = async () => {
+  const job = startBuild({
+    user: { username: 'tester', account: 'acct-1' }, title: 'Raft', filename: 'raft.md', text: raft,
+    llm: { api: 'openai-responses', model: 'fake', apiKey: 'sk-fake-1234567890' },
+    images: { baseUrl: `http://127.0.0.1:${server.address().port}`, apiKey: 'k-fake-1234567890', model: 'gpt-image-1' },
+    wasmerToken: 'wap_fake_1234567890', look: { theme: 'watercolor', color: 'color', label: 'test', directive: 'watercolor' },
+  });
+  const events = [];
+  await new Promise(done => job.listeners.add(e => { if (e) events.push(e); else done(); }));
+  return { job, events };
+};
+const { job, events } = await build();
+const firstImages = images.splice(0);
+// Every painting refused: the build must stop before deploying a book without pictures.
+refuseImages = true;
+const refused = await build();
 server.close();
 const lines = events.filter(e => !['tool', 'tool-result', 'usage'].includes(e.kind)).map(e => `${e.stage.padEnd(10)} ${e.role ? `[${e.role}] ` : ''}${String(e.message).slice(0, 140)}`);
 console.log(lines.join('\n'));
@@ -119,8 +133,11 @@ let failures = 0;
 const expect = (label, cond, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${label}${cond ? '' : ` ${extra}`}`); if (!cond) failures++; };
 expect('roles ran in order with one revision', roles.join(',') === 'Analyst,Examiner,Analyst,Examiner,Writer,Critic,Builder', roles.join(','));
 expect('book passed its checks', events.some(e => e.stage === 'check' && /Book passes/.test(e.message)));
-expect('two sheets then two backdrops painted from them', images.join(',') === '/images/generations,/images/generations,/images/edits,/images/edits', images.join(','));
+expect('two sheets then two backdrops painted from them', firstImages.join(',') === '/images/generations,/images/generations,/images/edits,/images/edits', firstImages.join(','));
 expect('reached deploy', events.some(e => e.stage === 'deploy'));
+const failed = refused.events.find(e => e.stage === 'failed');
+expect('refused paintings fail the build loudly', /Painting failed for \d+ pictures.*art\/char-.*organization must be verified/.test(failed?.message || ''), failed?.message);
+expect('a book without pictures is not deployed', !refused.events.some(e => e.stage === 'deploy' || e.stage === 'upload'));
 expect('brief, script and reviews archived', ['brief.json', 'script.json', 'reviews/brief-1.json', 'reviews/brief-2.json', 'reviews/script-1.json'].every(f => existsSync(join(archive, f))), readdirSync(archive).join(','));
 console.log(failures ? `${failures} FAILED` : 'all passed');
 process.exit(failures ? 1 : 0);

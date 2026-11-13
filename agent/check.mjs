@@ -1,5 +1,5 @@
-// Usage: node /agent/check.mjs <site-dir>. Prints one JSON report; exit 1 on errors.
-import { existsSync, readFileSync } from 'node:fs';
+// Usage: node /agent/check.mjs <site-dir> [--art painted|svg] [--final]. Prints one JSON report; exit 1 on errors.
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { LIMITS, ENGINE_FILES, AUTHORED_FILES, MAX_SVG_BYTES } from './limits.mjs';
@@ -9,6 +9,8 @@ const flag = (name, fallback) => args.includes(name) ? args[args.indexOf(name) +
 const artMode = flag('--art', 'painted');
 const theme = flag('--theme', null);
 const colorMode = flag('--color', 'color');
+// --final: the pictures must be on disk too (after painting, before deploying).
+const final = args.includes('--final');
 // Always end with a report, even if something above never settles.
 let reported = false;
 const watchdog = setTimeout(() => {
@@ -20,6 +22,7 @@ const watchdog = setTimeout(() => {
 const site = resolve(args.find((a, i) => !a.startsWith('--') && !String(args[i - 1]).startsWith('--')) || '.');
 const errors = [];
 const warnings = [];
+const missingArt = [];
 const fail = message => errors.push(message);
 
 function fake() {
@@ -262,6 +265,15 @@ if (!errors.length) {
         if (/<script|<image|<foreignObject|\bon[a-z]+=|href=["']https?:/i.test(svg)) fail(`art/${id}.svg must not contain scripts, images, event handlers or external links`);
       }
     } else if (story?.artExtension) fail('leave story.artExtension unset; the coordinator paints webp backdrops');
+    if (final) {
+      const ext = story?.artExtension || 'webp';
+      const wanted = new Set([...used, ...(story?.cast || []).map(c => c?.art).filter(Boolean)]);
+      for (const id of wanted) {
+        const file = join(site, 'art', `${id}.${ext}`);
+        if (!existsSync(file) || !statSync(file).size) missingArt.push(`art/${id}.${ext}`);
+      }
+      if (missingArt.length) fail(`${missingArt.length} picture${missingArt.length === 1 ? '' : 's'} the book shows ${missingArt.length === 1 ? 'is' : 'are'} missing: ${missingArt.join(', ')}`);
+    }
   }
 
   for (const file of ['story.js', 'scenes.js']) {
@@ -281,6 +293,7 @@ const report = {
   pages: story?.pages?.length ?? 0,
   images: plan?.images?.length ?? 0,
   cover: story?.pages?.[0]?.art ?? null,
+  missingArt,
   // Where the words sit on each backdrop, so the painter keeps that part calm.
   sides: (story?.pages || []).reduce((sides, page, index) => {
     if (!page?.art) return sides;

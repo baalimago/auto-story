@@ -8,7 +8,7 @@ import { redact } from './pi_run.mjs';
 import { listFiles, zipDirectory } from './zip.mjs';
 import { deployZip, waitLive } from './wasmer_api.mjs';
 import { saveStory } from './stories.mjs';
-import { prepareWorkspace, createContext, runStages, archiveWork, copyDir } from './stages.mjs';
+import { prepareWorkspace, createContext, runStages, archiveWork, copyDir, missingPictures } from './stages.mjs';
 import { saveVersion } from './versions.mjs';
 
 export const WORK_ROOT = process.env.WORK_ROOT || '/tmp/auto-story';
@@ -81,7 +81,10 @@ export function startJob({ user, title, filename = '', llm = null, images = null
 }
 
 // Pack a site and deploy it as appName (a new app, or a new version of the same app), then wait for it.
-export async function deploySite({ siteDir, appName, owner, token, emit, signal }) {
+// Refuses to publish a book whose pages point at pictures that are not in the package.
+export async function deploySite({ siteDir, appName, owner, token, emit, signal, artMode = 'painted' }) {
+  const missing = await missingPictures(siteDir, artMode);
+  if (missing.length) throw new Error(`Not deploying: ${missing.length} picture${missing.length === 1 ? '' : 's'} the book shows ${missing.length === 1 ? 'is' : 'are'} missing (${missing.join(', ')})`);
   const files = listFiles(siteDir);
   const zip = zipDirectory(siteDir, files);
   emit({ stage: 'deploy', message: `Packed ${files.length} files` });
@@ -116,7 +119,7 @@ async function run(job, { user, title, filename, text, llm, images, wasmer, look
 
   // App URLs are public on Wasmer Edge, so the suffix is random enough that a book can't be guessed.
   const appName = `story-${slugify(bookTitle, 22)}-${unguessable()}`;
-  const deployed = await deploySite({ siteDir, appName, owner, token: wasmer.token, emit, signal });
+  const deployed = await deploySite({ siteDir, appName, owner, token: wasmer.token, emit, signal, artMode });
 
   const story = {
     id: job.id, title: bookTitle, summary: pi.final?.summary || '', metaphor: pi.final?.metaphor || '',

@@ -49,6 +49,12 @@ function runNode(script, args) {
 }
 
 export const runCheck = (siteDir, artMode, look) => runNode('check.mjs', [siteDir, '--art', artMode, '--theme', look.theme, '--color', look.color]);
+// Which pictures the book shows but the site lacks (art/<id>.webp or .svg). Run after painting and before every deploy.
+export async function missingPictures(siteDir, artMode) {
+  const report = await runNode('check.mjs', [siteDir, '--art', artMode, '--final']);
+  if (Array.isArray(report.missingArt)) return report.missingArt;
+  throw new Error(`Could not check the book's pictures: ${(report.errors || []).slice(0, 2).join('; ')}`);
+}
 const planCheckArgs = (workDir, stage, extra = []) => [workDir, '--stage', stage, ...extra];
 const planCheckCommand = (workDir, stage, extra = []) => `node ${join(config.agentDir, 'check_plan.mjs')} ${planCheckArgs(workDir, stage, extra).join(' ')}`;
 export const runPlanCheck = (workDir, stage, extra = []) => runNode('check_plan.mjs', planCheckArgs(workDir, stage, extra));
@@ -235,8 +241,27 @@ const stages = {
     const report = readJson(join(ctx.workDir, 'check.json'));
     const painted = await paintAll(ctx.siteDir, ctx.images, ctx.look, ctx.emit, { signal: ctx.signal, usage: ctx.usage, sides: report.sides || {}, only: ctx.only });
     stop(ctx);
-    if (!painted.painted.length && !ctx.only) ctx.emit({ stage: 'paint', level: 'warn', message: 'No backdrops were painted; the book will use its watercolor fallbacks' });
     archiveWork(ctx.workDir, ctx.archive);
+    // A book with holes in it is not finished: give the missing pictures one more try, then stop
+    // here instead of publishing broken pictures.
+    let missing = await missingPictures(ctx.siteDir, 'painted');
+    const retryable = missing.length && Object.values(painted.errors || {}).some(m => !/safety|moderation|content policy|verif|billing|quota|api key|unauthori[sz]ed|forbidden/i.test(m));
+    if (retryable) {
+      const ids = missing.map(f => f.replace(/^art\//, '').replace(/\.webp$/, ''));
+      ctx.emit({ stage: 'paint', level: 'warn', message: `Trying ${ids.join(', ')} once more` });
+      const only = { sheets: new Set(ids.filter(i => i.startsWith('char-')).map(i => i.slice(5))), images: new Set(ids.filter(i => !i.startsWith('char-'))) };
+      const again = await paintAll(ctx.siteDir, ctx.images, ctx.look, ctx.emit, { signal: ctx.signal, usage: ctx.usage, sides: report.sides || {}, only });
+      stop(ctx);
+      painted.painted.push(...again.painted);
+      painted.sheets.push(...again.sheets);
+      Object.assign(painted.errors, again.errors);
+      archiveWork(ctx.workDir, ctx.archive);
+      missing = await missingPictures(ctx.siteDir, 'painted');
+    }
+    if (missing.length) {
+      const reasons = [...new Set(Object.values(painted.errors || {}))].slice(0, 3);
+      throw new Error(`Painting failed for ${missing.length} picture${missing.length === 1 ? '' : 's'} the book shows (${missing.join(', ')})${reasons.length ? `. The image API said: ${reasons.join(' | ')}` : ''}`);
+    }
     return painted;
   },
 };

@@ -85,7 +85,7 @@ async function withRetries(fn) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try { return await fn(); } catch (error) {
       lastError = error;
-      if (/safety|moderation|content policy/i.test(error.message) || error.status === 400) break;
+      if (/safety|moderation|content policy/i.test(error.message) || [400, 401, 403].includes(error.status)) break;
       await new Promise(r => setTimeout(r, attempt * 3000));
     }
   }
@@ -107,7 +107,8 @@ export async function paintAll(siteDir, images, look, onEvent = () => {}, { sign
   const allCharacters = characterList(plan);
   const characters = only ? allCharacters.filter(c => only.sheets.has(c.id)) : allCharacters;
   const backdrops = only ? plan.images.filter(i => only.images.has(i.id)) : plan.images;
-  const results = { painted: [], failed: [], sheets: [] };
+  // errors maps a picture id to why it could not be painted.
+  const results = { painted: [], failed: [], sheets: [], errors: {} };
   const sheets = new Map();
   if (only) for (const c of allCharacters.filter(c => !only.sheets.has(c.id))) {
     const file = join(siteDir, 'art', `char-${c.id}.webp`);
@@ -130,6 +131,7 @@ export async function paintAll(siteDir, images, look, onEvent = () => {}, { sign
         sheets.set(character.id, { id, name: character.name, data });
         results.sheets.push(id);
       } catch (error) {
+        results.errors[id] = error.message;
         onEvent({ stage: 'paint', level: 'warn', message: `Could not paint ${character.name}'s model sheet: ${error.message}. That character will be painted from its description only.` });
       }
     }, signal);
@@ -156,6 +158,7 @@ export async function paintAll(siteDir, images, look, onEvent = () => {}, { sign
       results.painted.push(image.id);
     } catch (error) {
       results.failed.push(image.id);
+      results.errors[image.id] = error.message;
       onEvent({ stage: 'paint', level: 'warn', message: `Could not paint ${image.id}: ${error.message}` });
     }
   }, signal);
