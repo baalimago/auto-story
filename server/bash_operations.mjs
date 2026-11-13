@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { config } from './config.mjs';
 import { terminateChild } from './terminate_child.mjs';
 
 const BASH = process.env.BASH_BIN || ['/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash'].find(p => existsSync(p)) || 'bash';
@@ -7,13 +8,18 @@ const BASH = process.env.BASH_BIN || ['/bin/bash', '/usr/bin/bash', '/usr/local/
 // WASIX supports child processes but not detached process groups.
 const DEFAULT_TIMEOUT_SECONDS = 120;
 
+// Every command sources agent/tools/shell.sh first: Node stand-ins for grep and rg, plain errors for
+// python and friends, and a fix for `node --input-type=module` heredocs, which Edge.js cannot read.
+const SHELL_RC = `${config.agentDir}/tools/shell.sh`;
+const shellEnv = env => ({ ...(env || process.env), ...(existsSync(SHELL_RC) ? { BASH_ENV: SHELL_RC, AUTO_STORY_TOOLS: `${config.agentDir}/tools` } : {}) });
+
 export function createBashOperations(onTimeout = () => {}) {
   return {
     exec(command, cwd, { onData, signal, timeout = DEFAULT_TIMEOUT_SECONDS, env }) {
       return new Promise((resolve, reject) => {
         if (signal?.aborted) return reject(new Error('Bash command aborted'));
         const child = spawn(BASH, ['-c', command], {
-          cwd, env, detached: false, stdio: ['ignore', 'pipe', 'pipe'],
+          cwd, env: shellEnv(env), detached: false, stdio: ['ignore', 'pipe', 'pipe'],
         });
         let failure;
         const stop = (message, timedOut = false) => {

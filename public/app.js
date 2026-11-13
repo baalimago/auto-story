@@ -384,6 +384,7 @@ function handleEvent(event) {
   if (event.kind === 'usage') return;
   if (event.stage === 'job') {
     state.buildId = event.id;
+    $('transcripts').hidden = false;
     storage(s => s.setItem('auto-story-build', event.id));
     $('abort').hidden = event.status !== 'running';
     $('progress-title').textContent = `Writing “${event.title}”`;
@@ -711,7 +712,8 @@ function renderHistory() {
     return `<li class="${live ? 'live' : ''}">
       ${v.kind === 'tweak' && v.message ? `<p class="bubble">${escape(v.message)}</p>` : ''}
       <div class="ver"><strong>Version ${v.n}</strong> · ${escape(what || 'rebuilt the book')} · ${escape(v.by || '')} · ${escape(new Date(v.at).toLocaleString())}
-        ${live ? '<span class="pill">live</span>' : b.canRollback ? `<button class="ghost small" data-rollback="${v.n}" type="button">Roll back to this</button>` : ''}</div>
+        ${live ? '<span class="pill">live</span>' : b.canRollback ? `<button class="ghost small" data-rollback="${v.n}" type="button">Roll back to this</button>` : ''}
+        ${v.kind !== 'rollback' ? `<button class="ghost small" data-transcripts="${escape(v.job || b.story.id)}" type="button">Agent transcripts</button>` : ''}</div>
     </li>`;
   }).join('') || '<li class="muted">No versions yet.</li>';
   $('history').scrollTop = $('history').scrollHeight;
@@ -771,8 +773,66 @@ $('tweak-go').addEventListener('click', async () => {
 });
 
 $('history').addEventListener('click', async e => {
+  const job = e.target.closest('[data-transcripts]')?.dataset.transcripts;
+  if (job) return openTranscripts(job);
   const n = e.target.closest('[data-rollback]')?.dataset.rollback;
   if (!n || state.buildId) return;
   if (!confirm(`Roll the live book back to version ${n}? Nothing is lost: this becomes a new version, and you can roll forward again.`)) return;
   await startStream(`/api/stories/${state.editing}/rollback`, { version: Number(n) });
+});
+
+// ── Agent transcripts: every agent session of a build or tweak, for debugging ────────────────────
+let transcriptsJob = null;
+async function openTranscripts(id) {
+  transcriptsJob = id;
+  const dialog = $('transcripts-dialog');
+  const list = $('transcripts-list');
+  $('transcripts-view').hidden = true;
+  list.innerHTML = '<li class="muted">Loading…</li>';
+  if (!dialog.open) dialog.showModal();
+  try {
+    const { transcripts } = await api(`/api/builds/${id}/transcripts`);
+    list.innerHTML = transcripts.map(t => `<li data-name="${escape(t.name)}">
+      <button class="ghost small" data-read="${escape(t.name)}" type="button">Read</button>
+      <span>${escape(t.role || t.step)}${t.stage ? ` · ${escape(t.stage)}` : ''} · <code>${escape(t.name.replace(/^transcripts\//, ''))}</code> · ${Math.max(1, Math.round(t.bytes / 1024))} KiB${t.legacy ? ' · abridged (older build)' : ''}</span></li>`).join('')
+      || '<li class="muted">This run has no agent transcripts (nothing was written, or it only repainted or rolled back).</li>';
+  } catch (error) {
+    list.innerHTML = `<li class="muted">Could not load transcripts: ${escape(error.message)}</li>`;
+  }
+}
+
+async function fetchAuthed(path) {
+  const response = await fetch(path, { credentials: 'same-origin', headers: authHeaders() });
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || `HTTP ${response.status}`);
+  return response;
+}
+
+$('transcripts').addEventListener('click', () => state.buildId && openTranscripts(state.buildId));
+$('transcripts-close').addEventListener('click', () => $('transcripts-dialog').close());
+$('transcripts-list').addEventListener('click', async e => {
+  const name = e.target.closest('[data-read]')?.dataset.read;
+  if (!name) return;
+  const view = $('transcripts-view');
+  for (const li of $('transcripts-list').children) li.classList.toggle('open', li.dataset.name === name);
+  view.hidden = false;
+  view.textContent = 'Loading…';
+  try {
+    view.textContent = await (await fetchAuthed(`/api/builds/${transcriptsJob}/transcripts/${encodeURIComponent(name.replace(/\.ndjson$/, '.txt'))}`)).text();
+    view.scrollTop = 0;
+  } catch (error) { view.textContent = `Could not load it: ${error.message}`; }
+});
+$('transcripts-zip').addEventListener('click', async () => {
+  const button = $('transcripts-zip');
+  button.disabled = true;
+  try {
+    const blob = await (await fetchAuthed(`/api/builds/${transcriptsJob}/transcripts.zip`)).blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `transcripts-${transcriptsJob}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (error) { alert(`Could not download: ${error.message}`); }
+  finally { button.disabled = false; }
 });

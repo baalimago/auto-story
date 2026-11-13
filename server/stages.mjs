@@ -9,7 +9,7 @@
 //
 // Owner notes (free text) reach the authoring agents as INPUT.owner_notes.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from './config.mjs';
 import { runPi } from './pi_run.mjs';
@@ -94,13 +94,16 @@ function baseInput(workDir, doc) {
       site: join(workDir, 'site'),
       engine_readme: join(config.agentDir, 'ENGINE.md'),
       example: join(config.agentDir, 'example'),
+      example_files: ['story.js', 'scenes.js'].map(f => join(config.agentDir, 'example', f)),
+      scratch: join(workDir, '.tmp'),
     },
+    tools: { pages: `node ${join(config.agentDir, 'tools', 'pages.mjs')} ${workDir}` },
     limits: { ...LIMITS, ...PLAN_LIMITS },
   };
 }
 
 // ctx: { workDir, archive?, emit, signal?, llm, images?, look, usage, notes?, only? }
-// logDir, when set without archive, receives the agent logs only (tweaks snapshot versions instead).
+// logDir, when set without archive, receives the agent transcripts only (tweaks snapshot versions instead).
 // only limits painting to some sheets and backdrops (see paintAll); set it after the build stage.
 // notes is the owner's free-text instruction for this run; archive, when set, receives logs and copies of the files.
 export function createContext(options) {
@@ -135,9 +138,10 @@ async function agent(ctx, { name, prompt, stage, role, input }) {
   const inputPath = join(ctx.workDir, 'inputs', `${n}-${name}.txt`);
   mkdirSync(join(ctx.workDir, 'inputs'), { recursive: true });
   writeFileSync(inputPath, `INPUT\n${JSON.stringify(input, null, 2)}\n`);
+  // The full transcript of every agent session is kept with the job's archive (transcripts.mjs serves it).
   const pi = await runPi({
     workDir: ctx.workDir, systemPath: join(config.agentDir, 'prompts', `${prompt}.md`), inputPath, stage, role,
-    logPath: join(ctx.logDir || ctx.archive || ctx.workDir, `pi-${n}-${name}.ndjson`), onEvent: ctx.emit, signal: ctx.signal, llm: ctx.llm, usage: ctx.usage,
+    transcriptPath: join(ctx.logDir || ctx.archive || ctx.workDir, 'transcripts', `${n}-${name}.ndjson`), onEvent: ctx.emit, signal: ctx.signal, llm: ctx.llm, usage: ctx.usage,
   });
   archiveWork(ctx.workDir, ctx.archive);
   stop(ctx);
@@ -151,6 +155,33 @@ async function mustPass(ctx, check, what, extra) {
   return report;
 }
 
+// reviews/ holds only <stage>-<round>.json; a reviewer's drafts there would be archived as if they were reviews.
+// (Its transcript still has whatever it wrote.)
+function dropStrayReviews(ctx, stage) {
+  const dir = join(ctx.workDir, 'reviews');
+  for (const f of readdirSync(dir)) {
+    if (/^(brief|script)-\d+\.json$/.test(f)) continue;
+    rmSync(join(dir, f), { recursive: true, force: true });
+    if (ctx.archive) rmSync(join(ctx.archive, 'reviews', f), { recursive: true, force: true });
+    ctx.emit({ stage, level: 'warn', message: `Removed stray reviews/${f}; reviewers write only their review` });
+  }
+}
+
+// The latest script review, when it is newer than script.json: a passing critic may still list minor issues,
+// and the builder is the next agent who can act on them (for example a widget the engine cannot show as planned).
+export function openScriptReview(workDir) {
+  const dir = join(workDir, 'reviews');
+  if (!existsSync(dir)) return null;
+  const rounds = readdirSync(dir).map(f => f.match(/^script-(\d+)\.json$/)).filter(Boolean).sort((a, b) => b[1] - a[1]);
+  if (!rounds.length) return null;
+  const file = join(dir, rounds[0][0]);
+  try {
+    if (statSync(file).mtimeMs < statSync(join(workDir, 'script.json')).mtimeMs) return null;
+    const issues = (readJson(file).issues || []);
+    return issues.length ? file : null;
+  } catch { return null; }
+}
+
 // Author, then an adversarial reviewer; send it back with the review until it passes or the rounds run out.
 async function reviewed(ctx, { name, stage, author, reviewer, check, reviewCheck, input, what }) {
   for (const f of readdirSync(join(ctx.workDir, 'reviews')).filter(f => f.startsWith(`${name}-`))) rmSync(join(ctx.workDir, 'reviews', f));
@@ -160,6 +191,7 @@ async function reviewed(ctx, { name, stage, author, reviewer, check, reviewCheck
     const review = join(ctx.workDir, 'reviews', `${name}-${round}.json`);
     const reviewInput = { ...input, review, commands: { check: planCheckCommand(ctx.workDir, reviewCheck, ['--review', review]) } };
     await agent(ctx, { name: `${name}-review-${round}`, prompt: reviewer.prompt, stage, role: reviewer.role, input: reviewInput });
+    dropStrayReviews(ctx, stage);
     const verdict = await runPlanCheck(ctx.workDir, reviewCheck, ['--review', review]);
     if (!verdict.ok) {
       ctx.emit({ stage, level: 'warn', message: `The ${reviewer.role.toLowerCase()}'s review was malformed (${verdict.errors[0]}); continuing with the ${what.toLowerCase()} as it is` });
@@ -223,6 +255,8 @@ const stages = {
       look: { label: look.label, theme: look.theme, color: look.color, directive: look.directive, instructions: LOOK_INSTRUCTIONS },
       rebuild: existsSync(join(siteDir, 'story.js')),
     };
+    const review = openScriptReview(workDir);
+    if (review) input.open_issues = review;
     const pi = await agent(ctx, { name: 'build', prompt: 'builder', stage: 'build', role: 'Builder', input: withNotes(ctx, input) });
     for (const file of ENGINE_FILES.filter(f => f !== 'index.html')) copyFile(join(config.agentDir, 'template', file), join(siteDir, file));
     ctx.emit({ stage: 'check', message: 'Checking the book' });

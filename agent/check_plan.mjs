@@ -22,7 +22,7 @@ const slug = v => typeof v === 'string' && /^[a-z0-9-]{1,32}$/.test(v);
 const list = v => Array.isArray(v) ? v : [];
 
 function readJson(file, label) {
-  if (!existsSync(file)) { fail(`missing ${label}`); return null; }
+  if (!existsSync(file)) { fail(`missing ${label}: write it first, then run this check`); return null; }
   try { return JSON.parse(readFileSync(file, 'utf8')); }
   catch (error) { fail(`${label} is not valid JSON: ${error.message}`); return null; }
 }

@@ -152,9 +152,22 @@
         <li data-stage="done">Live</li>
       </ol>
       <div id="result" class="result" hidden></div>
-      <div class="log-head"><span>Agent log</span><span><span id="usage"></span> <span id="elapsed"></span></span></div>
+      <div class="log-head"><span>Agent log <button id="transcripts" class="ghost small" type="button" hidden>Full transcripts</button></span><span><span id="usage"></span> <span id="elapsed"></span></span></div>
       <ol id="log" class="log" aria-live="polite"></ol>
     </section>
+
+    <dialog id="transcripts-dialog" class="transcripts">
+      <div class="transcripts-head">
+        <h3>Agent transcripts</h3>
+        <span>
+          <button id="transcripts-zip" class="ghost small" type="button">Download all (.zip)</button>
+          <button id="transcripts-close" class="ghost small" type="button">Close</button>
+        </span>
+      </div>
+      <p class="muted small">Every agent session of this run, unabridged: its input, system prompt, thinking, tool calls and full outputs.</p>
+      <ol id="transcripts-list" class="transcripts-list"></ol>
+      <pre id="transcripts-view" class="transcripts-view" hidden></pre>
+    </dialog>
 
     <section id="shelf" class="gallery-wrap">
       <h2>Your shelf</h2>

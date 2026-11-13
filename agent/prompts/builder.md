@@ -7,7 +7,10 @@ TASK
 Turn script.json into the storybook website in the site/ directory.
 
 METHOD
-- Read INPUT, script.json, brief.json, the engine contract at INPUT.paths.engine_readme, and the example book in INPUT.paths.example.
+- Read INPUT, script.json, brief.json, the engine contract at INPUT.paths.engine_readme, and the example book
+  (INPUT.paths.example_files). The engine files already in site/ (book.js, book.css, widgets.js) need no reading:
+  ENGINE.md describes them.
+- To generate story.js from script.json with code, write the generator as .tmp/build.mjs and run it with node.
 - Write site/story.js from the script:
   - title, subtitle, question, answer and ideas (id, title, text) come from script.json.
   - One story page per script page, in the same order, with the same idea, side and text. Change page text only
@@ -31,6 +34,11 @@ METHOD
 - Update the <title> and meta description in site/index.html.
 - Run INPUT.commands.check. Fix every error, then run it again until it prints "ok": true.
 - Review: read only the page texts in order and compare them with script.json. Fix anything you lost on the way. Run the check again.
+
+WHEN INPUT.open_issues IS SET
+It is the critic's last review of the script. The script passed or ran out of rounds with these issues still open.
+Read them before you build. Resolve those you can while building without changing what a page means: above all,
+reshape any interaction the engine cannot show as planned so it fits its widget's fields. Leave the story itself as written.
 
 WHEN INPUT.owner_notes IS SET
 The book's owner asked for these changes. Follow them unless they would make the book false to the document;

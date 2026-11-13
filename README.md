@@ -58,9 +58,22 @@ session so they judge the files, not the author's reasoning.
   an existing workspace; `ctx.notes` passes the owner's free-text request to
   the authoring agents as `INPUT.owner_notes`.
 
-Everything above is archived to `/data/builds/<id>/` with the Pi logs.
-`node test/stages.mjs` and `node test/pipeline.mjs` test the validators,
-the painter and the whole chain offline, with a scripted stand-in for Pi.
+Everything above is archived to `/data/builds/<id>/`, with the full transcript of
+every agent session in `transcripts/<nn>-<step>.ndjson`: its input, the whole system
+prompt, assistant messages with thinking, every tool call with its arguments and full
+output, retries, stderr and the exit status. The owner reads them from "Full transcripts"
+above the agent log or "Agent transcripts" on each version in the edit view
+(`GET /api/builds/<id>/transcripts`, `…/transcripts/<name>.txt` for a readable copy,
+`…/transcripts.zip` for everything). Tweaks keep theirs under their own job id.
+
+Agents run in a sandbox with bash, basic file commands and Node only. Every prompt ends
+with `agent/prompts/environment.md`, which says so, and every bash command sources
+`agent/tools/shell.sh`: Node stand-ins for `grep`/`rg` (`agent/tools/search.mjs`), plain
+errors for `python` and friends, and a fix for `node --input-type=module` heredocs, which
+Edge.js drops into its REPL. `agent/tools/pages.mjs` prints a script's page texts in order.
+
+`node test/stages.mjs`, `node test/tools.mjs` and `node test/pipeline.mjs` test the validators,
+the sandbox tools, the painter and the whole chain offline, with a scripted stand-in for Pi.
 
 ## The book format
 

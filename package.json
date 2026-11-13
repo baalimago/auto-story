@@ -7,6 +7,6 @@
   "scripts": {
     "build": "node scripts/prepare-pi.mjs",
     "start": "node server/server.mjs",
-    "test": "node test/stages.mjs && node test/pipeline.mjs && node test/edit.mjs && node test/private_shelf.mjs"
+    "test": "node test/stages.mjs && node test/tools.mjs && node test/pipeline.mjs && node test/edit.mjs && node test/private_shelf.mjs"
   }
 }

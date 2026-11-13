@@ -72,7 +72,11 @@ const input = JSON.parse(readFileSync(inputPath, 'utf8').replace(/^INPUT\\n/, ''
 const F = ${JSON.stringify(fixtures)};
 const ws = input.paths.workspace;
 const out = o => process.stdout.write(JSON.stringify(o) + '\\n');
+out({ type: 'session_info', model: { id: 'fake' }, note: 'fake endpoint', systemPrompt: readFileSync(systemPath, 'utf8') });
 out({ type: 'agent_start' });
+out({ type: 'tool_execution_start', toolCallId: 't1', toolName: 'bash', args: { command: 'ls' } });
+out({ type: 'tool_execution_end', toolCallId: 't1', toolName: 'bash', isError: false, result: { content: [{ type: 'text', text: 'brief.json' }] } });
+process.stderr.write('a warning on stderr\\n');
 const qs = Array.from({ length: 10 }, (_, i) => ({ asked_by: i % 2 ? 'child' : 'expert', question: 'Why?', brief_answer: 'Because.', source_answer: 'Because.', part: 'part-01', ok: true }));
 if (role === 'analyst') { const b = JSON.parse(readFileSync(join(F, 'brief.json'), 'utf8')); if (input.revise) b.answer += ' Revised.'; writeFileSync(join(ws, 'brief.json'), JSON.stringify(b)); }
 if (role === 'examiner') {
@@ -82,6 +86,7 @@ if (role === 'examiner') {
     : { verdict: 'pass', summary: 'Clear and accurate now.', questions: qs, issues: [] }));
 }
 if (role === 'writer') copyFileSync(join(F, 'script.json'), join(ws, 'script.json'));
+if (role === 'critic') writeFileSync(join(ws, 'reviews', 'draft.txt'), 'scratch');
 if (role === 'critic') writeFileSync(input.review, JSON.stringify({ verdict: 'pass', summary: 'A child would get it.', issues: [], reader_test: [1, 2, 3, 4].map(() => ({ question: 'Q', answer_from_pages: 'A', correct: true })) }));
 if (role === 'builder') {
   copyFileSync(join(F, 'story.js'), join(ws, 'site', 'story.js'));
@@ -138,6 +143,16 @@ expect('reached deploy', events.some(e => e.stage === 'deploy'));
 const failed = refused.events.find(e => e.stage === 'failed');
 expect('refused paintings fail the build loudly', /Painting failed for \d+ pictures.*art\/char-.*organization must be verified/.test(failed?.message || ''), failed?.message);
 expect('a book without pictures is not deployed', !refused.events.some(e => e.stage === 'deploy' || e.stage === 'upload'));
+const transcripts = existsSync(join(archive, 'transcripts')) ? readdirSync(join(archive, 'transcripts')).sort() : [];
+expect('one transcript per agent session', transcripts.length === 7 && transcripts[0] === '01-brief.ndjson' && transcripts.at(-1) === '07-build.ndjson', transcripts.join(','));
+const t1 = transcripts.length ? readFileSync(join(archive, 'transcripts', transcripts[0]), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
+expect('transcript has input, system prompt, tool output, stderr and exit',
+  t1[0]?.type === 'run' && /INPUT/.test(t1[0].input) && t1.some(e => e.type === 'session_info' && e.systemPrompt) &&
+  t1.some(e => e.type === 'tool_execution_end' && e.result.content[0].text === 'brief.json') && t1.some(e => e.type === 'stderr' && /warning/.test(e.text)) && t1.at(-1)?.type === 'exit',
+  JSON.stringify(t1.map(e => e.type)));
+expect('transcripts hold no API key', !transcripts.some(f => readFileSync(join(archive, 'transcripts', f), 'utf8').includes('sk-fake-1234567890')));
+expect('start message names the model note', events.some(e => e.kind === 'start' && /fake endpoint/.test(e.message)));
+expect('stray review draft removed', !existsSync(join(archive, 'reviews', 'draft.txt')) && events.some(e => /stray reviews\/draft.txt/.test(e.message)));
 expect('brief, script and reviews archived', ['brief.json', 'script.json', 'reviews/brief-1.json', 'reviews/brief-2.json', 'reviews/script-1.json'].every(f => existsSync(join(archive, f))), readdirSync(archive).join(','));
 console.log(failures ? `${failures} FAILED` : 'all passed');
 process.exit(failures ? 1 : 0);

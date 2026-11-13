@@ -8,7 +8,8 @@ Write script.json in the workspace from brief.json. brief.json has been checked 
 and open the document parts only to find a concrete detail or real numbers for an interaction.
 
 METHOD
-- Read INPUT, brief.json, the engine contract at INPUT.paths.engine_readme (to know the widgets), and the example book in INPUT.paths.example.
+- Read INPUT, brief.json, the engine contract at INPUT.paths.engine_readme (to know the widgets), and the example book
+  (INPUT.paths.example_files). Read each once.
 - Choose one warm, concrete metaphor world in which each brief concept is a thing that happens, not a label.
   Every metaphor must behave like the real mechanism (the concept's how steps), so a reader who understands the story
   can predict the real behaviour. Write down where each metaphor stops working, and make sure it does not teach
@@ -27,17 +28,21 @@ METHOD
 - teaches: what the reader understands after the page that they did not before. If you cannot say, cut or merge the page.
 - Interactions: at least 3 pages, using the engine's widgets (stepper, squeeze, compare, slider, quiz).
   In plan, spell out the real content: the steps, items, labels and numbers, taken from the brief.
+  Plan only what the widget's fields in ENGINE.md can hold (for example a stepper has 2-8 steps, each a short label
+  and a caption of at most 220 characters), so the builder can build it as written.
   The last interactive page is a quiz on the central question whose wrong answers are tempting misconceptions.
 - Scenes are the backdrops, reused across pages. For each, list the characters in it and describe the composition.
   Keep the side where the page's words sit (side) calm and mostly empty.
 - Run INPUT.commands.check. Fix every error and run it again until it prints "ok": true.
-- Review: read only the page texts in order, as a 10 year old would. Rewrite any page you could not follow without
+- Review: read only the page texts in order (INPUT.tools.pages prints them), as a 10 year old would. Rewrite any page you could not follow without
   its note. Run the check again.
 
 WHEN INPUT.revise IS SET
-A critic reviewed your script and wrote the review at INPUT.revise. Read it, fix every major issue and every failed
-reader test by changing script.json, and fix the minor issues that make the book better. Keep what works.
-Note in notes.md what you changed and why. Run the check again.
+A critic reviewed your script and wrote the review at INPUT.revise. Read it, script.json, brief.json and notes.md.
+You wrote the script in an earlier session, so skip the example book, and open ENGINE.md only if an issue is about
+an interaction. Fix every major issue and every failed reader test by changing script.json, and fix the minor
+issues that make the book better, including every interaction the critic says the engine cannot show. Keep what works.
+Append to notes.md what you changed and why. Run the check again.
 
 script.json
 {

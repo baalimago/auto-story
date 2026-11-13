@@ -1,5 +1,5 @@
-import { readFileSync, writeSync } from 'node:fs';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 // /pi under wasmer.toml; ../pi or ../node_modules when the repo runs in place (anybuild Node deploys).
 const PI_BUNDLE = 'node_modules/@earendil-works/pi-coding-agent/dist/bundle/index.js';
 const piBundle = [process.env.PI_DIR && `${process.env.PI_DIR}/${PI_BUNDLE}`, `/pi/${PI_BUNDLE}`,
@@ -19,6 +19,12 @@ const modelId = process.env.PI_MODEL;
 const baseUrl = process.env.PI_BASE_URL || '';
 if (!modelId) throw new Error('PI_MODEL is required');
 const cwd = process.cwd();
+// Every role's prompt ends with the same description of the sandbox (agent/prompts/environment.md).
+const agentDir = dirname(dirname(systemPath));
+const environmentPath = join(dirname(systemPath), 'environment.md');
+const systemText = readFileSync(systemPath, 'utf8') +
+  (existsSync(environmentPath) ? `\n${readFileSync(environmentPath, 'utf8').replaceAll('{{agent}}', agentDir)}` : '');
+const out = event => process.stdout.write(JSON.stringify(event) + '\n');
 // The default credential store needs utime, which Edge.js lacks.
 const credentials = {
   async read() { return undefined; },
@@ -28,11 +34,12 @@ const credentials = {
 };
 const settingsManager = SettingsManager.inMemory({ transport: 'sse' });
 const modelRuntime = await ModelRuntime.create({ credentials, modelsPath: null, allowModelNetwork: false });
+let modelNote = '';
 const model = resolveModel();
 const resourceLoader = new DefaultResourceLoader({
   cwd, agentDir: process.env.PI_CODING_AGENT_DIR || `${process.env.HOME || '/tmp'}/.pi`, settingsManager,
   noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true,
-  appendSystemPrompt: [readFileSync(systemPath, 'utf8')],
+  appendSystemPrompt: [systemText],
 });
 await resourceLoader.reload();
 const { session } = await createAgentSession({
@@ -40,15 +47,19 @@ const { session } = await createAgentSession({
   sessionManager: SessionManager.inMemory(cwd),
   customTools: [createBashToolDefinition(cwd, { operations: bashOperations })],
 });
+// The parent keeps every line as the agent's transcript, so pass on everything except streaming deltas
+// (message_start/update, tool_execution_update) and what repeats other events: tool-result messages
+// (tool_execution_end has them) and session entries that are messages (message_end has them).
+// Thinking stays in: the parent shows only text, but the transcript is for debugging.
+let systemPrompt = systemText;
+try { systemPrompt = session.systemPrompt || session.agent?.state?.systemPrompt || systemText; } catch {}
+out({ type: 'session_info', model: { id: model.id, api: model.api, provider: model.provider, baseUrl: model.baseUrl }, note: modelNote, systemPrompt });
 session.subscribe(event => {
-  if (event.type === 'message_end' && event.message?.role === 'assistant') {
-    const message = { ...event.message, content: event.message.content.filter(part => part.type !== 'thinking') };
-    process.stdout.write(JSON.stringify({ type: event.type, message }) + '\n');
-  } else if (['agent_start', 'agent_end'].includes(event.type)) {
-    process.stdout.write(JSON.stringify({ type: event.type }) + '\n');
-  } else if (['tool_execution_start', 'tool_execution_end'].includes(event.type)) {
-    process.stdout.write(JSON.stringify(event) + '\n');
-  }
+  if (['message_start', 'message_update', 'tool_execution_update'].includes(event.type)) return;
+  if (event.type === 'message_end' && event.message?.role === 'toolResult') return;
+  if (event.type === 'entry_appended' && event.entry?.type === 'message') return;
+  if (event.type === 'agent_end') return out({ type: event.type });
+  try { out(event); } catch (error) { out({ type: 'unserializable_event', eventType: event.type, error: error.message }); }
 });
 // Known models keep Pi's metadata; unknown ids and custom endpoints borrow a template of the same API.
 function resolveModel() {
@@ -68,7 +79,7 @@ function resolveModel() {
     Object.assign(model, { reasoning: false, compat: {} });
     delete model.thinkingLevelMap;
   }
-  writeSync(2, `Using ${api} model ${modelId} at ${model.baseUrl}${known ? '' : ` (metadata from ${template.id})`}\n`);
+  modelNote = `${model.baseUrl}${known ? '' : `, metadata borrowed from ${template.id}`}`;
   return model;
 }
 

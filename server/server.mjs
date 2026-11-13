@@ -8,6 +8,7 @@ import { listStories } from './stories.mjs';
 import { getBoard, startTweak, startRollback } from './edit.mjs';
 import { PROVIDERS, parseProviders, parseImagesOnly } from './providers.mjs';
 import { lookOptions, parseLook } from './looks.mjs';
+import { listTranscripts, readTranscript, renderTranscript, transcriptsZip } from './transcripts.mjs';
 
 const MAX_BODY = 4 * 1024 * 1024;
 const TYPES = {
@@ -17,7 +18,7 @@ const TYPES = {
 };
 
 function send(res, status, body, headers = {}) {
-  const json = typeof body !== 'string';
+  const json = typeof body !== 'string' && !Buffer.isBuffer(body);
   res.writeHead(status, { 'content-type': json ? 'application/json' : 'text/plain; charset=utf-8', 'cache-control': 'no-store', ...headers });
   res.end(json ? JSON.stringify(body) : body);
 }
@@ -141,6 +142,26 @@ const server = http.createServer(async (req, res) => {
       if (!archived) return send(res, 404, { error: 'Unknown build' });
       res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store' });
       return res.end(archived.map(e => JSON.stringify(e)).join('\n') + '\n');
+    }
+
+    // Full agent transcripts of a build or tweak, for its owner only: a list, one transcript, or a zip of all.
+    const transcripts = path.match(/^\/api\/builds\/([0-9]{8}-[a-z0-9]{6})\/transcripts(\.zip|\/.+)?$/);
+    if (transcripts) {
+      const { user } = await authenticate(req);
+      const id = transcripts[1];
+      if (!canFollow(id, user)) return send(res, 404, { error: 'Unknown build' });
+      const rest = transcripts[2] || '';
+      if (!rest) return send(res, 200, { id, transcripts: listTranscripts(id) });
+      if (rest === '.zip') {
+        const zip = transcriptsZip(id);
+        if (!zip) return send(res, 404, { error: 'This build has no transcripts' });
+        return send(res, 200, zip, { 'content-type': 'application/zip', 'content-disposition': `attachment; filename="transcripts-${id}.zip"` });
+      }
+      const name = decodeURIComponent(rest.slice(1));
+      const text = name.endsWith('.txt') ? readTranscript(id, name.replace(/\.txt$/, '.ndjson')) : readTranscript(id, name);
+      if (text === null) return send(res, 404, { error: 'Unknown transcript' });
+      if (name.endsWith('.txt')) return send(res, 200, renderTranscript(text));
+      return send(res, 200, text, { 'content-type': 'application/x-ndjson; charset=utf-8' });
     }
 
     if (path.startsWith('/api/')) return send(res, 404, { error: 'Not found' });

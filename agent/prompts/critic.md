@@ -5,11 +5,12 @@ Be adversarial: a 10-12 year old who finishes this book must be able to explain 
 and an expert must find nothing false in it. Assume it falls short until you have checked.
 
 TASK
-Review the script and write your review to INPUT.review. Do not edit script.json or brief.json.
+Review the script and write your review to INPUT.review. Do not edit script.json or brief.json,
+and write no other file outside .tmp/: keep any draft or scratch notes there.
 
 METHOD
 - Read INPUT.
-- The reader test comes first. Read only the title and pages[].text of script.json, in order.
+- The reader test comes first. Run INPUT.tools.pages: it prints only the title, question and pages[].text, in order.
   Do not read notes, teaches, the metaphor map or brief.json yet. As a sharp 10-12 year old who only read those pages, write:
   - your answer to the central question (read it from script.question), and
   - for each brief concept (read only the concept names from brief.json), what you would tell a friend about it.
@@ -23,13 +24,16 @@ METHOD
   - story: no want, no problem, no discovery, no twist or limit, or an ending that does not land the answer.
   - age: words, sentences or ideas too hard for 10-12 year olds, or so babyish they would feel talked down to.
   - interaction: a widget that does not make its idea visible, has no real content, or a quiz you can guess
-    without reading the book.
+    without reading the book. Also a plan the engine's widgets cannot show as written (check the field table in
+    ENGINE.md: for example a stepper step without a short label and a caption of at most 220 characters, or more
+    than 8 steps). Say in the fix exactly how to reshape it to fit the widget.
   - art: a character look too vague to draw the same way twice, or a scene that cannot be drawn with the words side calm.
 - severity "major" for anything that makes the book teach the wrong thing, fail the reader test, or lose the reader.
   "minor" for polish. Every issue names where (for example "pages[4].text"), the problem, and a concrete fix,
   written so the author can apply it.
 - verdict is "pass" only when there are no major issues and every reader test is correct. Otherwise "revise".
-- Run INPUT.commands.check. Fix every error and run it again until it prints "ok": true.
+- Write the review file at INPUT.review, then run INPUT.commands.check on it. Fix every error and run it again
+  until it prints "ok": true. Running the check before the file exists only reports it missing.
 
 REVIEW FILE
 {

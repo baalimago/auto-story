@@ -26,11 +26,17 @@ export function listFiles(dir, root = dir) {
 }
 
 export function zipDirectory(dir, files = listFiles(dir)) {
+  return zipEntries(files.map(name => ({ name, data: readFileSync(join(dir, name)) })));
+}
+
+// entries: [{ name, data: Buffer | string }]
+export function zipEntries(entries) {
   const locals = [];
   const centrals = [];
   let offset = 0;
-  for (const name of files) {
-    const data = readFileSync(join(dir, name));
+  for (const entry of entries) {
+    const name = entry.name;
+    const data = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(String(entry.data), 'utf8');
     const nameBuf = Buffer.from(name, 'utf8');
     const crc = crc32(data);
     const local = Buffer.alloc(30);
@@ -67,8 +73,8 @@ export function zipDirectory(dir, files = listFiles(dir)) {
   const centralSize = centrals.reduce((n, b) => n + b.length, 0);
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(files.length, 8);
-  end.writeUInt16LE(files.length, 10);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
   end.writeUInt32LE(centralSize, 12);
   end.writeUInt32LE(offset, 16);
   return Buffer.concat([...locals, ...centrals, end]);

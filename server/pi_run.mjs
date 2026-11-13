@@ -1,11 +1,13 @@
 // Runs Pi in a child process and turns its JSON event lines into build events.
+// Every line Pi prints is also kept, unabridged, as the agent's transcript (see transcripts.mjs).
 import { spawn } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { config } from './config.mjs';
 import { terminateChild } from './terminate_child.mjs';
 
 const MAX_EVENT_TEXT = 4000;
+const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024;
 
 export function redact(text, extra = []) {
   let out = String(text);
@@ -24,7 +26,7 @@ function toolSummary(name, args = {}, workDir = '') {
   return JSON.stringify(args).slice(0, 300);
 }
 
-export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal, llm, usage, stage = 'agent', role = 'Pi', timeoutSeconds = config.piTimeoutSeconds }) {
+export function runPi({ workDir, systemPath, inputPath, transcriptPath, onEvent, signal, llm, usage, stage = 'agent', role = 'Pi', timeoutSeconds = config.piTimeoutSeconds }) {
   const home = join(workDir, '.home');
   mkdirSync(home, { recursive: true });
   mkdirSync(join(workDir, '.tmp'), { recursive: true });
@@ -36,6 +38,7 @@ export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal
     PI_API: llm.api,
     PI_MODEL: llm.model,
     PI_BASE_URL: llm.baseUrl || '',
+    AGENT_DIR: config.agentDir,
     [llm.api === 'anthropic-messages' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY']: llm.apiKey,
     ...(existsSync('/etc/ssl/certs') ? { SSL_CERT_DIR: '/etc/ssl/certs' } : {}),
     ...(existsSync('/etc/ssl/certs/ca-bundle.crt') ? { SSL_CERT_FILE: '/etc/ssl/certs/ca-bundle.crt' } : {}),
@@ -43,14 +46,25 @@ export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal
   };
   const summary = { bashCalls: 0, successfulBashCalls: 0, messages: 0, ended: false, failed: false, lastText: '' };
   const tools = new Map();
-  const emit = event => {
-    const clean = { ...event, stage, role, message: redact(event.message ?? '', [llm.apiKey]).slice(0, MAX_EVENT_TEXT) };
-    appendFileSync(logPath, JSON.stringify({ at: new Date().toISOString(), ...clean }) + '\n');
-    onEvent(clean);
+  const emit = event => onEvent({ ...event, stage, role, message: redact(event.message ?? '', [llm.apiKey]).slice(0, MAX_EVENT_TEXT) });
+  // The transcript: a header, every Pi event as it arrived, stderr, and how the process ended.
+  let transcriptBytes = 0;
+  const record = entry => {
+    if (!transcriptPath || transcriptBytes > MAX_TRANSCRIPT_BYTES) return;
+    try {
+      const line = redact(JSON.stringify({ at: new Date().toISOString(), ...entry }), [llm.apiKey]) + '\n';
+      transcriptBytes += line.length;
+      appendFileSync(transcriptPath, transcriptBytes > MAX_TRANSCRIPT_BYTES ? JSON.stringify({ type: 'truncated', reason: 'transcript reached 64 MiB' }) + '\n' : line);
+    } catch {}
   };
+  if (transcriptPath) mkdirSync(dirname(transcriptPath), { recursive: true });
+  const readText = path => { try { return readFileSync(path, 'utf8'); } catch { return null; } };
+  record({ type: 'run', stage, role, model: llm.model, api: llm.api, baseUrl: llm.baseUrl || null, workDir, systemPath, inputPath, input: readText(inputPath) });
+  let modelNote = '';
 
   function handle(event) {
-    if (event.type === 'agent_start') emit({ stage: 'agent', kind: 'start', message: `${role} started with ${llm.model} (${llm.api})` });
+    if (event.type === 'session_info') { modelNote = event.note || ''; return; }
+    if (event.type === 'agent_start') emit({ stage: 'agent', kind: 'start', message: `${role} started with ${llm.model} (${llm.api}${modelNote ? `, ${modelNote}` : ''})` });
     if (event.type === 'tool_execution_start') {
       tools.set(event.toolCallId, event.toolName);
       if (event.toolName === 'bash') summary.bashCalls++;
@@ -107,7 +121,15 @@ export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal
     const line = text => {
       if (!text.trim()) return;
       lastActivity = Date.now();
-      try { handle(JSON.parse(text)); } catch { summary.failed = true; emit({ stage: 'agent', kind: 'error', message: 'Unreadable Pi event' }); }
+      let event;
+      try { event = JSON.parse(text); } catch {
+        summary.failed = true;
+        record({ type: 'unreadable', text: text.slice(0, 100000) });
+        emit({ stage: 'agent', kind: 'error', message: 'Unreadable Pi event' });
+        return;
+      }
+      record(event);
+      handle(event);
     };
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -117,7 +139,7 @@ export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal
       while ((end = pending.indexOf('\n')) !== -1) { line(pending.slice(0, end)); pending = pending.slice(end + 1); }
       if (pending.length > 8 * 1024 * 1024) { summary.failed = true; terminateChild(child); pending = ''; }
     });
-    child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-8000); });
+    child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-8000); record({ type: 'stderr', text: chunk }); });
     child.on('error', error => { summary.failed = true; emit({ stage: 'agent', kind: 'error', level: 'error', message: error.message }); });
     child.on('close', code => {
       clearTimeout(timer);
@@ -126,6 +148,7 @@ export function runPi({ workDir, systemPath, inputPath, logPath, onEvent, signal
       line(pending);
       if (stderr.trim()) emit({ stage: 'agent', kind: 'stderr', message: stderr.trim() });
       const ok = code === 0 && !timedOut && !summary.failed && summary.ended && summary.lastStopReason === 'stop';
+      record({ type: 'exit', code, timedOut, ok, aborted: Boolean(summary.aborted), bashCalls: summary.bashCalls, messages: summary.messages, stopReason: summary.lastStopReason || null });
       resolve({ ...summary, code, timedOut, ok, final: parseFinal(summary.lastText) });
     });
   });
