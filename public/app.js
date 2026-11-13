@@ -763,7 +763,7 @@ function renderBoard() {
       `<span class="faces">${chars.map(c => `<span class="face">${thumb(`char-${c.id}`, c.name, 'avatar')}<span>${escape(c.name)}</span></span>`).join('')}</span>`,
       chars.map((c, i) => item(`characters.${i}`, `${thumb(`char-${c.id}`, c.name, 'avatar small')}<strong>${escape(c.name)}</strong> <span class="muted">${escape(clip(c.is, 70))}</span>`,
         `<div class="with-pic">${thumb(`char-${c.id}`, c.name, 'sheet')}<div>${field('script', `characters.${i}.name`, 'Name', { input: true })}
-         ${field('script', `characters.${i}.is`, 'Stands for', { input: true })}${field('script', `characters.${i}.personality`, 'Personality', { input: true })}
+         ${field('script', `characters.${i}.is`, 'Stands for')}${field('script', `characters.${i}.personality`, 'Personality')}
          ${field('script', `characters.${i}.look`, 'Look', { hint: 'changing it repaints this character' })}${repaintBox(`char-${c.id}`)}</div></div>`,
         mark('script', `characters.${i}`))).join(''),
       mark('script', 'characters')));

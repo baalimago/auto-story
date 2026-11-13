@@ -305,19 +305,21 @@ body.editing main, body.editing header { max-width: 1260px; }
 
 .with-pic { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; align-items: start; }
 .with-pic.wide { grid-template-columns: 220px minmax(0, 1fr); }
-.with-pic > div { display: grid; gap: 10px; }
+.with-pic > div { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+.f textarea { field-sizing: content; }
+.card-body, .item-body { grid-template-columns: minmax(0, 1fr); min-width: 0; }
 .sheet, .backdrop { width: 100%; border-radius: 10px; border: 1.5px solid color-mix(in srgb, var(--line) 25%, transparent); display: block; aspect-ratio: 3 / 2; object-fit: cover; }
 .sheet { aspect-ratio: 1; object-fit: contain; background: #fff; }
 @media (max-width: 600px) { .with-pic, .with-pic.wide { grid-template-columns: 1fr; } .sheet, .backdrop { max-width: 260px; } }
 .pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
 .pics img { width: 100%; border-radius: 8px; }
 
-.f { display: grid; gap: 3px; font-size: 13px; color: var(--muted); }
+.f { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 3px; font-size: 13px; color: var(--muted); }
 .f small { opacity: .8; }
 .f textarea, .f input {
   font: 15px/1.5 var(--serif); color: var(--ink); background: var(--paper); width: 100%; box-sizing: border-box;
   border: 1.5px solid color-mix(in srgb, var(--line) 18%, transparent); border-radius: 8px; padding: 7px 10px; resize: vertical;
-  field-sizing: content; min-height: 2.4em; transition: border-color .2s, box-shadow .2s, background .6s;
+  min-width: 0; max-width: 100%; min-height: 2.4em; transition: border-color .2s, box-shadow .2s, background .6s;
 }
 .f textarea:focus, .f input:focus { outline: none; border-color: var(--line); }
 .f .dirty { border-color: #c07a2c; background: color-mix(in srgb, #f2c27b 14%, var(--paper)); }
@@ -351,7 +353,7 @@ body.editing main, body.editing header { max-width: 1260px; }
 .edits li { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--card); border: 1px solid color-mix(in srgb, var(--line) 20%, transparent); }
 .chat-form { display: flex; gap: 8px; align-items: flex-end; }
 .chat-form textarea {
-  flex: 1; font: 15px/1.45 var(--serif); color: var(--ink); background: var(--paper); resize: none; field-sizing: content; max-height: 10em;
+  flex: 1; min-width: 0; font: 15px/1.45 var(--serif); color: var(--ink); background: var(--paper); resize: none; field-sizing: content; max-height: 10em;
   border: 2px solid var(--line); border-radius: 12px; padding: 8px 12px; min-height: 2.6em;
 }
 .chat-status { margin: 0; }
