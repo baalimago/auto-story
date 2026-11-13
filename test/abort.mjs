@@ -4,7 +4,7 @@ import { abortBuild, startBuild } from '/app/build.mjs';
 
 const [endpoint, mode = 'local'] = process.argv.slice(2);
 const job = startBuild({
-  user: { username: 'tester', namespaces: [], allowed: true },
+  user: { id: 'u_tester', username: 'tester', account: 'wasmer:u_tester', namespaces: [], allowed: true },
   title: 'Abort test', filename: 'abort.txt', text: 'Raft keeps a replicated log consistent. '.repeat(20),
   llm: { api: 'openai-completions', model: 'hang-model', baseUrl: endpoint, apiKey: 'sk-test-abort-123456' },
   images: null, wasmerToken: 'wap_unused_token_1234567890', look: { theme: 'watercolor', color: 'color', label: 'test', directive: 'test' },
@@ -18,8 +18,8 @@ setTimeout(() => {
     console.log('wrote abort flag only');
     return;
   }
-  console.log('abort by stranger:', (() => { try { abortBuild(job.id, 'someone-else'); return 'allowed?!'; } catch (e) { return e.message; } })());
-  console.log('abort by owner:', JSON.stringify(abortBuild(job.id, 'tester')));
+  console.log('abort by stranger:', (() => { try { abortBuild(job.id, { username: 'someone-else', account: 'wasmer:u_other' }); return 'allowed?!'; } catch (e) { return e.message; } })());
+  console.log('abort by owner:', JSON.stringify(abortBuild(job.id, { username: 'tester', account: 'wasmer:u_tester' })));
 }, 10000);
 const started = Date.now();
 const timer = setInterval(() => {

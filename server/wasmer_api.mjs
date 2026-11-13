@@ -17,9 +17,10 @@ export async function gql(query, variables = {}, token) {
 
 // Same identity `wasmer whoami` reports, plus namespace memberships.
 export async function whoami(token) {
-  const data = await gql(`query { viewer { username namespaces(first: 100) { edges { node { globalName } } } } }`, {}, token);
+  const data = await gql(`query { viewer { id username namespaces(first: 100) { edges { node { globalName } } } } }`, {}, token);
   if (!data.viewer) throw new Error('The token is not valid for this registry');
   return {
+    id: data.viewer.id,
     username: data.viewer.username,
     namespaces: data.viewer.namespaces.edges.map(e => e.node.globalName),
   };

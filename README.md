@@ -67,7 +67,27 @@ equivalent of `WASMER_TOKEN=<token> wasmer whoami`
 and then deploys the book **with that token**, under the visitor's own
 account (or `STORY_OWNER`, if set and the visitor can deploy there).
 The token lives only in memory for the build, is redacted from every
-event, and never reaches Pi. Everyone can read the shelf.
+event, and never reaches Pi.
+
+## Private shelves
+
+Each Wasmer account has its own shelf. Requests carry the token as
+`Authorization: Bearer <token>`; `server/auth.mjs` resolves it to an
+identity whose `account` key is the Wasmer **user id** (`wasmer:<id>`), not
+the username, so a renamed account keeps its books. Books are filed under
+`/data/stories/<sha256(account)>/<build id>.json` (`server/stories.mjs`),
+and `/api/stories`, a build's event log and abort all check that the
+caller's account started the build. Books saved before this change (flat
+`/data/stories/*.json`) move to their owner's shelf the first time that
+username lists it.
+
+The deployed books are still Wasmer Edge apps, which are reachable by
+anyone with the URL, so app names end in 10 random characters to make
+them unguessable.
+
+"Login with Wasmer" will slot into `credentialFrom()` in
+`server/auth.mjs` (a session cookie that resolves to the same identity)
+and `authHeaders()` in `public/app.js`; nothing else needs to change.
 
 The `wasmer login` browser flow does not work here: the registry's
 `newNonce` only accepts callback URLs on `localhost` with an explicit port
@@ -112,6 +132,9 @@ scripts/dev.sh
 
 Open http://localhost:8080 and sign in with a Wasmer token. Builds and
 gallery entries go to `./data`.
+
+`node test/private_shelf.mjs` checks shelf isolation on plain Node
+against a fake registry.
 
 ## Deploy
 

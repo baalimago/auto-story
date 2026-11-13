@@ -1,5 +1,6 @@
 // One build: document -> Pi-authored storybook -> painted backdrops -> new Wasmer Edge app.
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from './config.mjs';
@@ -8,6 +9,7 @@ import { terminateChild } from './terminate_child.mjs';
 import { paintAll } from './paint.mjs';
 import { listFiles, zipDirectory } from './zip.mjs';
 import { deployZip, waitLive } from './wasmer_api.mjs';
+import { saveStory } from './stories.mjs';
 import { LIMITS, ENGINE_FILES, ART_MODES, LOOK_INSTRUCTIONS } from '../agent/limits.mjs';
 
 const WORK_ROOT = process.env.WORK_ROOT || '/tmp/auto-story';
@@ -15,7 +17,6 @@ const MAX_ACTIVE = Number(process.env.MAX_ACTIVE_BUILDS || 2);
 const jobs = new Map();
 
 export const buildsDir = () => join(config.dataDir, 'builds');
-export const storiesDir = () => join(config.dataDir, 'stories');
 
 export function activeBuilds() {
   return [...jobs.values()].filter(j => j.status === 'running').length;
@@ -78,7 +79,7 @@ export function startBuild({ user, title, filename, text, llm, images, wasmerTok
   if (activeBuilds() >= MAX_ACTIVE) throw Object.assign(new Error('This instance is busy with other books; try again in a few minutes'), { status: 429 });
   const id = `${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8)}`;
   const wasmer = { token: wasmerToken, owner: config.storyOwner || user.username };
-  const job = { id, user: user.username, title, filename, status: 'running', events: [], listeners: new Set(), startedAt: Date.now(), controller: new AbortController(),
+  const job = { id, user: user.username, account: user.account, title, filename, status: 'running', events: [], listeners: new Set(), startedAt: Date.now(), controller: new AbortController(),
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, images: 0, imageTokens: 0 } };
   jobs.set(id, job);
   const archive = join(buildsDir(), id);
@@ -133,7 +134,7 @@ async function run(job, { user, title, filename, text, llm, images, wasmer, look
   writeFileSync(join(workDir, 'notes.md'), `# Notes for "${title}"\n\n`);
   const input = renderInput({ title, filename, chars: source.length, truncated, workDir, artMode, look });
   writeFileSync(join(workDir, 'input.txt'), input);
-  writeFileSync(join(archive, 'meta.json'), JSON.stringify({ id: job.id, user: user.username, title, filename, chars: text.length, startedAt: job.startedAt, api: llm.api, model: llm.model, baseUrl: llm.baseUrl, artMode, look: look.label }));
+  writeFileSync(join(archive, 'meta.json'), JSON.stringify({ id: job.id, user: user.username, account: user.account, title, filename, chars: text.length, startedAt: job.startedAt, api: llm.api, model: llm.model, baseUrl: llm.baseUrl, artMode, look: look.label }));
   emit({ stage: 'prepare', message: `Read ${source.length.toLocaleString('en')} characters from ${filename || 'your text'}${truncated ? ' (trimmed)' : ''}` });
 
   const { owner } = wasmer;
@@ -167,7 +168,8 @@ async function run(job, { user, title, filename, text, llm, images, wasmer, look
   const files = listFiles(siteDir);
   const zip = zipDirectory(siteDir, files);
   emit({ stage: 'deploy', message: `Packed ${files.length} files` });
-  const appName = `story-${slugify(bookTitle)}-${job.id.slice(-4)}`;
+  // App URLs are public on Wasmer Edge, so the suffix is random enough that a book can't be guessed.
+  const appName = `story-${slugify(bookTitle, 22)}-${unguessable()}`;
   const deployed = await deployZip({ zip, appName, owner, token: wasmer.token, onEvent: emit, signal });
   emit({ stage: 'deploy', message: `Waiting for ${deployed.url} to answer` });
   const live = await waitLive(deployed.url, deployed.versionId);
@@ -181,11 +183,15 @@ async function run(job, { user, title, filename, text, llm, images, wasmer, look
     minutes: Math.round((Date.now() - job.startedAt) / 6000) / 10,
     usage: { ...job.usage, tokens: job.usage.input + job.usage.output + job.usage.cacheRead + job.usage.cacheWrite, cost: Math.round(job.usage.cost * 10000) / 10000 },
   };
-  mkdirSync(storiesDir(), { recursive: true });
-  writeFileSync(join(storiesDir(), `${job.id}.json`), JSON.stringify(story, null, 2));
+  saveStory(user.account, story);
   archiveWork(workDir, archive);
   rmSync(workDir, { recursive: true, force: true });
   return story;
+}
+
+function unguessable(length = 10) {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  return [...randomBytes(length)].map(b => alphabet[b % alphabet.length]).join('');
 }
 
 function archiveWork(workDir, archive) {
@@ -196,17 +202,23 @@ function archiveWork(workDir, archive) {
   } catch (error) { console.warn(`Archive failed: ${error.message}`); }
 }
 
+// Who started a build: from memory, or from the archive when it ran on another instance.
+function buildAccount(id) {
+  const job = jobs.get(id);
+  if (job) return job.account;
+  try { return JSON.parse(readFileSync(join(buildsDir(), id, 'meta.json'), 'utf8')).account || null; }
+  catch { return null; }
+}
+
 // Only the builder who started a build may abort it. Works across instances via the volume flag.
-export function abortBuild(id, username) {
+export function abortBuild(id, user) {
+  const username = user.username;
   if (!/^[0-9]{8}-[a-z0-9]{6}$/.test(id)) throw Object.assign(new Error('Unknown build'), { status: 404 });
   const archive = join(buildsDir(), id);
   const job = jobs.get(id);
-  let owner = job?.user;
-  if (!owner) {
-    try { owner = JSON.parse(readFileSync(join(archive, 'meta.json'), 'utf8')).user; }
-    catch { throw Object.assign(new Error('Unknown build'), { status: 404 }); }
-  }
-  if (owner !== username) throw Object.assign(new Error('Only the person who started this build can abort it'), { status: 403 });
+  const owner = buildAccount(id);
+  if (!owner) throw Object.assign(new Error('Unknown build'), { status: 404 });
+  if (owner !== user.account) throw Object.assign(new Error('Only the person who started this build can abort it'), { status: 403 });
   writeFileSync(join(archive, 'abort'), JSON.stringify({ by: username, at: new Date().toISOString() }));
   if (job && job.status === 'running') { job.abortedBy = username; job.controller.abort(); }
   else if (!job) {
@@ -243,6 +255,11 @@ function markEnded(id, message) {
 }
 
 // Events for a build that may be running on another instance, or no longer at all.
+// Build logs are as private as the books: only the account that started a build can read them.
+export function canFollow(id, user) {
+  return /^[0-9]{8}-[a-z0-9]{6}$/.test(id) && Boolean(user?.account) && buildAccount(id) === user.account;
+}
+
 export function archivedEvents(id) {
   if (!/^[0-9]{8}-[a-z0-9]{6}$/.test(id)) return null;
   const state = archiveState(id);

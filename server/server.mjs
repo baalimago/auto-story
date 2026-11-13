@@ -1,9 +1,10 @@
 import http from 'node:http';
-import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { config } from './config.mjs';
-import { identify } from './auth.mjs';
-import { abortBuild, activeBuilds, archivedEvents, getJob, startBuild, storiesDir } from './build.mjs';
+import { authenticate, identify, publicUser } from './auth.mjs';
+import { abortBuild, activeBuilds, archivedEvents, canFollow, getJob, startBuild } from './build.mjs';
+import { listStories } from './stories.mjs';
 import { PROVIDERS, parseProviders } from './providers.mjs';
 import { lookOptions, parseLook } from './looks.mjs';
 
@@ -49,14 +50,6 @@ function serveStatic(req, res, pathname) {
   createReadStream(file).pipe(res);
 }
 
-function listStories() {
-  try {
-    return readdirSync(storiesDir()).filter(f => f.endsWith('.json'))
-      .map(f => { try { return JSON.parse(readFileSync(join(storiesDir(), f), 'utf8')); } catch { return null; } })
-      .filter(Boolean).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 60);
-  } catch { return []; }
-}
-
 function streamJob(res, job) {
   res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
   const write = event => { try { res.write(JSON.stringify(event) + '\n'); } catch {} };
@@ -85,15 +78,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (path === '/api/auth/token' && req.method === 'POST') {
-      return send(res, 200, { user: await identify((await readJson(req)).token) });
+      return send(res, 200, { user: publicUser(await identify((await readJson(req)).token)) });
     }
 
-    if (path === '/api/stories') return send(res, 200, { stories: listStories() });
+    if (path === '/api/stories') {
+      const { user } = await authenticate(req);
+      return send(res, 200, { stories: listStories(user) });
+    }
 
     if (path === '/api/builds' && req.method === 'POST') {
       const body = await readJson(req);
-      const wasmerToken = String(body.wasmerToken || '').trim();
-      const user = await identify(wasmerToken);
+      const { user, token: wasmerToken } = await authenticate(req, body);
       if (!user.allowed) return send(res, 403, { error: `${user.username} is not on this app's allowlist` });
       const text = String(body.text || '').replace(/\u0000/g, '').trim();
       if (text.length < 200) return send(res, 400, { error: 'The document needs at least a few paragraphs of text' });
@@ -106,12 +101,14 @@ const server = http.createServer(async (req, res) => {
 
     const abort = path.match(/^\/api\/builds\/([0-9]{8}-[a-z0-9]{6})\/abort$/);
     if (abort && req.method === 'POST') {
-      const user = await identify((await readJson(req)).wasmerToken);
-      return send(res, 200, abortBuild(abort[1], user.username));
+      const { user } = await authenticate(req, await readJson(req));
+      return send(res, 200, abortBuild(abort[1], user));
     }
 
     const events = path.match(/^\/api\/builds\/([0-9]{8}-[a-z0-9]{6})\/events$/);
     if (events) {
+      const { user } = await authenticate(req);
+      if (!canFollow(events[1], user)) return send(res, 404, { error: 'Unknown build' });
       const job = getJob(events[1]);
       if (job) return streamJob(res, job);
       const archived = archivedEvents(events[1]);
@@ -123,7 +120,7 @@ const server = http.createServer(async (req, res) => {
     if (path.startsWith('/api/')) return send(res, 404, { error: 'Not found' });
     return serveStatic(req, res, path);
   } catch (error) {
-    console.error(error);
+    if (!error.status || error.status >= 500) console.error(error);
     if (!res.headersSent) send(res, error.status || 500, { error: error.message });
     else res.end();
   }

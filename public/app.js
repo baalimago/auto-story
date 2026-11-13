@@ -9,8 +9,14 @@ function escape(text) {
 }
 function setStatus(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
 
+// Every private call carries the visitor's credential. Login with Wasmer will swap this for a session cookie.
+function authHeaders(extra = {}) {
+  const token = state.wasmer?.token || savedToken();
+  return token ? { ...extra, authorization: `Bearer ${token}` } : extra;
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, { credentials: 'same-origin', ...options });
+  const response = await fetch(path, { credentials: 'same-origin', ...options, headers: authHeaders(options.headers) });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
   return body;
@@ -46,6 +52,7 @@ async function loadMe() {
   renderAccount();
   renderGate();
   updateGo();
+  loadGallery();
 }
 
 function checkToken(token) {
@@ -57,7 +64,7 @@ function renderAccount() {
   const user = state.wasmer?.user;
   if (!user) { account.innerHTML = ''; return; }
   account.innerHTML = `<span class="who">${WASMER_MARK}<strong>${escape(user.username)}</strong></span><button class="ghost" id="logout">Sign out</button>`;
-  $('logout').addEventListener('click', () => { dropToken(); state.wasmer = null; renderAccount(); renderGate(); updateGo(); });
+  $('logout').addEventListener('click', () => { dropToken(); state.wasmer = null; renderAccount(); renderGate(); updateGo(); loadGallery(); });
 }
 
 function renderGate(message, isError = true) {
@@ -71,7 +78,7 @@ function renderGate(message, isError = true) {
       <div class="gate-body">
         <h3>${WASMER_MARK}Sign in with Wasmer</h3>
         <p>Books are deployed as Wasmer Edge apps in <strong>your</strong> Wasmer account, using your access token.
-          Building is open to an allowlist of Wasmer users and namespaces; anyone can read the shelf.</p>
+          Building is open to an allowlist of Wasmer users and namespaces. Your shelf is private: only you see the books you made.</p>
         <ol class="steps">
           <li><a href="${TOKENS_URL}" target="_blank" rel="noopener">Create an access token on wasmer.io ↗</a>
             <span class="muted">(a dedicated one you can delete afterwards)</span></li>
@@ -90,7 +97,7 @@ function renderGate(message, isError = true) {
   } else if (!user.allowed) {
     gate.classList.add('denied');
     gate.innerHTML = `<div class="gate-body"><h3>Not on the list yet</h3><p>You are signed in as <strong>${escape(user.username)}</strong>,
-      but only allowlisted Wasmer users and namespaces can build books. You can still read the shelf below.</p></div>`;
+      but only allowlisted Wasmer users and namespaces can build books.</p></div>`;
   } else if (message) {
     gate.classList.add('welcome');
     gate.innerHTML = `<p>${escape(message)}</p>`;
@@ -115,6 +122,7 @@ async function signIn(event) {
     renderGate(user.allowed ? `Welcome, ${user.username}. Books will be deployed under ${owner}. Drop a document to begin.`
       : `${user.username} is not on this builder's allowlist.`, !user.allowed);
     updateGo();
+    loadGallery();
   } catch (error) {
     renderGate(error.message);
   }
@@ -463,10 +471,9 @@ $('go').addEventListener('click', async () => {
   resetProgress();
   try {
     const response = await fetch('/api/builds', {
-      method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+      method: 'POST', credentials: 'same-origin', headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({
         title: $('doc-title').value.trim() || state.doc.name, filename: state.doc.name, text: state.doc.text,
-        wasmerToken: state.wasmer.token,
         look: lookSettings(),
         llm: { api: m.api, baseUrl: m.baseUrl, model: m.model, apiKey: m.apiKey },
         images: { apiKey: m.imageKey },
@@ -490,7 +497,7 @@ $('abort').addEventListener('click', async () => {
   button.textContent = 'Aborting…';
   try {
     await api(`/api/builds/${state.buildId}/abort`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ wasmerToken: state.wasmer?.token }),
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
     });
   } catch (error) {
     alert(`Could not abort: ${error.message}`);
@@ -507,8 +514,8 @@ async function follow(id) {
   updateGo();
   for (let attempt = 0; attempt < 400; attempt++) {
     try {
-      const response = await fetch(`/api/builds/${id}/events`, { credentials: 'same-origin' });
-      if (response.status === 404) { finish(); return; }
+      const response = await fetch(`/api/builds/${id}/events`, { credentials: 'same-origin', headers: authHeaders() });
+      if (response.status === 404 || response.status === 401) { finish(); return; }
       if (await consume(response)) return;
     } catch {}
     await new Promise(r => setTimeout(r, 5000));
@@ -516,19 +523,25 @@ async function follow(id) {
 }
 
 async function loadGallery() {
+  const gallery = $('gallery');
+  if (!state.wasmer?.user) {
+    gallery.innerHTML = '<p class="empty">Sign in to see the books you have made. Each shelf is private to its Wasmer account.</p>';
+    return;
+  }
   try {
     const { stories } = await api('/api/stories');
-    if (!stories.length) return;
+    if (!stories.length) { gallery.innerHTML = '<p class="empty">No books yet. Drop a document to make your first one.</p>'; return; }
     $('gallery').innerHTML = stories.map(s => `
       <a class="book" href="${escape(s.url)}" target="_blank" rel="noopener">
         <div class="cover" style="${s.cover ? `background-image:url('${escape(s.cover)}')` : ''}"></div>
         <div class="meta"><h3>${escape(s.title)}</h3><p>${escape(s.summary || s.metaphor || '')}</p>
-        <p>by ${escape(s.user)} · ${new Date(s.createdAt).toLocaleDateString()}</p></div>
+        <p>${new Date(s.createdAt).toLocaleDateString()}</p></div>
       </a>`).join('');
-  } catch {}
+  } catch (error) {
+    gallery.innerHTML = `<p class="empty">Could not load your shelf: ${escape(error.message)}</p>`;
+  }
 }
 
 loadMe().catch(error => setStatus(error.message, true));
-loadGallery();
 const resume = storage(s => s.getItem('auto-story-build'));
 if (resume) { resetProgress(); follow(resume); }

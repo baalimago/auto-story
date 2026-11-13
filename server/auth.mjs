@@ -1,4 +1,5 @@
-// The visitor's Wasmer token is the credential: whoami decides identity and allowlist per request.
+// Who is calling. Today the credential is a Wasmer access token; "Login with Wasmer" will add a
+// session cookie in credentialFrom() and resolve to the same identity, so nothing downstream changes.
 import { createHash } from 'node:crypto';
 import { config } from './config.mjs';
 import { whoami } from './wasmer_api.mjs';
@@ -15,6 +16,12 @@ export function isAllowed(identity) {
     identity.namespaces.some(ns => lower(namespaces).includes(ns.toLowerCase()));
 }
 
+// The stable key everything private (stories, build logs) is filed under. It uses the Wasmer
+// user id, not the username, so a renamed account keeps its books and a reused name gets none.
+export function accountOf(identity) {
+  return `wasmer:${identity.id || `user:${identity.username.toLowerCase()}`}`;
+}
+
 // Equivalent of `WASMER_TOKEN=<token> wasmer whoami`, plus the allowlist check.
 export async function identify(token) {
   const clean = String(token || '').trim();
@@ -26,7 +33,25 @@ export async function identify(token) {
   let identity;
   try { identity = await whoami(clean); }
   catch { throw fail('Wasmer did not accept that token', 401); }
-  const user = { ...identity, allowed: isAllowed(identity) };
+  const user = { ...identity, account: accountOf(identity), allowed: isAllowed(identity) };
   cache.set(key, { user, until: Date.now() + CACHE_MS });
   return user;
+}
+
+// The credential on a request: `Authorization: Bearer <wasmer token>`, or a token in the JSON body
+// (older clients). This is the one place a Login-with-Wasmer session cookie will plug in.
+export function credentialFrom(req, body) {
+  const header = String(req.headers.authorization || '');
+  const bearer = header.match(/^Bearer\s+(.+)$/i)?.[1];
+  return { token: bearer || body?.wasmerToken || '' };
+}
+
+export async function authenticate(req, body) {
+  const { token } = credentialFrom(req, body);
+  return { user: await identify(token), token: String(token).trim() };
+}
+
+// Public view of a user for the browser: no internal account key.
+export function publicUser(user) {
+  return { username: user.username, namespaces: user.namespaces, allowed: user.allowed };
 }
