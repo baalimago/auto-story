@@ -17,7 +17,10 @@ export const config = {
   appDir: here.replace(/\/$/, ''),
   nodeBin: env.NODE_BIN || firstFile('/bin/node', '/usr/bin/node', '/usr/local/bin/node', process.execPath),
   bashBin: env.BASH_BIN || firstFile('/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash', 'bash'),
-  imageModel: env.OPENAI_IMAGE_MODEL || 'gpt-image-1',
+  // Image models in order of preference (OPENAI_IMAGE_MODEL may list several, comma-separated). Each build
+  // asks OpenAI which of these the key can use; see prepareImages in paint.mjs.
+  imageModels: (env.OPENAI_IMAGE_MODEL || 'gpt-image-2.6-sunburst,gpt-image-2.6-flare,gpt-image-2.5-sunburst,gpt-image-2.5-flare,gpt-image-1.5,gpt-image-1')
+    .split(',').map(s => s.trim()).filter(Boolean),
   imageQuality: env.OPENAI_IMAGE_QUALITY || 'medium',
   registryUrl: env.WASMER_REGISTRY_URL || 'https://registry.wasmer.io/graphql',
   storyOwner: env.STORY_OWNER || '',
@@ -32,4 +35,5 @@ export const config = {
 };
 
 // PATH for child processes (Pi, its bash tool, the validators): wherever node and bash actually live.
+config.imageModel = config.imageModels[0];
 config.childPath = [...new Set([config.nodeBin, config.bashBin].filter(p => p.includes('/')).map(p => p.replace(/\/[^/]+$/, '')).concat(['/bin', '/usr/bin', '/usr/local/bin']))].join(':');

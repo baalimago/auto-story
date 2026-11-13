@@ -87,6 +87,9 @@
         <label id="img-row">OpenAI key for paintings <small>(optional)</small>
           <input id="img-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
         </label>
+        <label>Image model <small>(blank picks the newest your key can use)</small>
+          <input id="img-model" autocomplete="off" spellcheck="false" placeholder="gpt-image-2.6-sunburst">
+        </label>
         <p id="art-note" class="note"></p>
         <label class="check"><input id="remember" type="checkbox"> Remember these on this device</label>
         <p class="note">Keys go to this app's backend for one build: they are handed to Pi and the painter, never written to disk, and forgotten when the build ends.</p>

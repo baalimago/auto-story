@@ -20,6 +20,14 @@ function cleanUrl(value) {
   return url.href.replace(/\/+$/, '');
 }
 
+// An image model the builder typed in goes first; the configured list stays behind it as fallbacks.
+function imageModel(body) {
+  const model = String(body.images?.model || '').trim();
+  if (!model) return config.imageModel;
+  if (!/^[A-Za-z0-9._:-]{1,80}$/.test(model)) throw bad('Image model id is invalid');
+  return model;
+}
+
 function cleanKey(value) {
   const key = String(value || '').trim();
   if (key && !/^[\x21-\x7e]{8,512}$/.test(key)) throw bad('The API key looks malformed');
@@ -47,8 +55,8 @@ export function parseProviders(body = {}) {
   // A separate key sent alongside is a leftover from an earlier setup, so it is ignored.
   const imageKey = cleanKey(body.images?.apiKey);
   let images = null;
-  if (llm.api === 'openai-responses' && llm.baseUrl === OPENAI_BASE) images = { apiKey: llm.apiKey, baseUrl: IMAGES_BASE, model: config.imageModel };
-  else if (imageKey) images = { apiKey: imageKey, baseUrl: IMAGES_BASE, model: config.imageModel };
+  if (llm.api === 'openai-responses' && llm.baseUrl === OPENAI_BASE) images = { apiKey: llm.apiKey, baseUrl: IMAGES_BASE, model: imageModel(body) };
+  else if (imageKey) images = { apiKey: imageKey, baseUrl: IMAGES_BASE, model: imageModel(body) };
   return { llm, images };
 }
 
@@ -56,5 +64,5 @@ export function parseProviders(body = {}) {
 export function parseImagesOnly(body = {}) {
   if (cleanKey(body.llm?.apiKey)) return parseProviders(body).images;
   const imageKey = cleanKey(body.images?.apiKey);
-  return imageKey ? { apiKey: imageKey, baseUrl: IMAGES_BASE, model: config.imageModel } : null;
+  return imageKey ? { apiKey: imageKey, baseUrl: IMAGES_BASE, model: imageModel(body) } : null;
 }

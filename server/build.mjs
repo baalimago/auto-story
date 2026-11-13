@@ -10,7 +10,7 @@ import { deployZip, waitLive } from './wasmer_api.mjs';
 import { saveStory } from './stories.mjs';
 import { prepareWorkspace, createContext, runStages, archiveWork, copyDir, missingPictures } from './stages.mjs';
 import { saveVersion } from './versions.mjs';
-import { checkImageKey } from './paint.mjs';
+import { prepareImages } from './paint.mjs';
 
 export const WORK_ROOT = process.env.WORK_ROOT || '/tmp/auto-story';
 const MAX_ACTIVE = Number(process.env.MAX_ACTIVE_BUILDS || 2);
@@ -108,12 +108,11 @@ async function run(job, { user, title, filename, text, llm, images, wasmer, look
   const { owner } = wasmer;
   emit({ stage: 'prepare', message: `The finished book will be deployed under ${owner}` });
   emit({ stage: 'prepare', message: `Look: ${look.label}` });
-  emit({ stage: 'prepare', message: images ? `Character sheets and backdrops will be painted with ${images.model}` : 'No image key: Pi will draw the characters and backdrops as SVG' });
-
   if (images) {
-    const refused = await checkImageKey(images);
+    const { refused, listed } = await prepareImages(images);
     if (refused) throw new Error(`The OpenAI key for paintings was refused: ${refused}. Fix the key and start again; nothing else was run.`);
-  }
+    emit({ stage: 'prepare', message: `Character sheets and backdrops will be painted with ${images.model}${listed ? '' : ' (could not list the models this key can use; will fall back if needed)'}` });
+  } else emit({ stage: 'prepare', message: 'No image key: Pi will draw the characters and backdrops as SVG' });
 
   const signal = job.controller.signal;
   const ctx = createContext({ workDir, archive, emit, signal, llm, images, look, usage: job.usage });

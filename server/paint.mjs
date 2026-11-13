@@ -44,50 +44,89 @@ export function composePrompt(plan, image, look, { sides = [], refs = [] } = {})
   ].filter(Boolean).join('\n\n');
 }
 
-// Ask the image API whether it accepts the key before any model time is spent on the book.
-// Listing models is free; only a clear refusal (401/403) counts, anything else is left to the painter.
-export async function checkImageKey(images) {
-  let response;
-  try { response = await fetch(`${images.baseUrl}/models`, { headers: { authorization: `Bearer ${images.apiKey}` } }); } catch { return null; }
-  if (response.status !== 401 && response.status !== 403) return null;
-  const body = await response.json().catch(() => ({}));
-  return body.error?.message || `HTTP ${response.status}`;
+// Pick the image model and check the key before any model time is spent on the book. Listing models
+// is free: a 401/403 means the key is refused; otherwise the first preferred model the key can use wins,
+// or the newest gpt-image model it lists. The other candidates stay as fallbacks while painting.
+// Returns { refused } or { model, listed } and sets images.model / images.fallbacks.
+export async function prepareImages(images) {
+  if (images.prepared) return images.prepared;
+  const preferred = [...new Set([images.model, ...(images.fallbacks || []), ...config.imageModels].filter(Boolean))];
+  let ids = null;
+  try {
+    const response = await fetch(`${images.baseUrl}/models`, { headers: { authorization: `Bearer ${images.apiKey}` } });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 401 || response.status === 403) return { refused: body.error?.message || `HTTP ${response.status}` };
+    if (response.ok && Array.isArray(body.data)) ids = body.data.map(m => m?.id).filter(id => typeof id === 'string');
+  } catch {}
+  const listed = ids && ids.length ? ids : null;
+  let order = preferred;
+  if (listed) {
+    const have = new Set(listed);
+    const newest = listed.filter(id => /^gpt-image/.test(id) && !preferred.includes(id)).sort(byVersionDesc);
+    order = [...preferred.filter(id => have.has(id)), ...newest];
+    if (!order.length) order = preferred;
+  }
+  images.model = order[0];
+  images.fallbacks = order.slice(1);
+  images.prepared = { model: images.model, listed: Boolean(listed) };
+  return images.prepared;
 }
+
+// gpt-image-2.6-sunburst before gpt-image-2.5-flare before gpt-image-1.
+function byVersionDesc(a, b) {
+  const v = id => (id.match(/\d+(\.\d+)?/) || ['0'])[0];
+  return parseFloat(v(b)) - parseFloat(v(a)) || a.localeCompare(b);
+}
+
+const modelMissing = error => error.status === 404 || /model_not_found|does not exist|not have access to (the )?model|unknown model|invalid model/i.test(error.message);
+// Request fields an image model may not take; dropped one at a time when the API names them.
+const OPTIONAL = ['input_fidelity', 'output_compression', 'output_format', 'quality'];
 
 async function request(path, init, images, usage) {
   const response = await fetch(`${images.baseUrl}${path}`, { method: 'POST', ...init, headers: { authorization: `Bearer ${images.apiKey}`, ...init.headers } });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw Object.assign(new Error(body.error?.message || `HTTP ${response.status}`), { status: response.status });
+  if (!response.ok) throw Object.assign(new Error(body.error?.message || `HTTP ${response.status}`), { status: response.status, param: body.error?.param });
   if (usage && body.usage) usage.imageTokens += body.usage.total_tokens || 0;
   const b64 = body.data?.[0]?.b64_json;
   if (!b64) throw new Error('No image data returned');
   return Buffer.from(b64, 'base64');
 }
 
-function generate(prompt, size, images, usage) {
-  return request('/images/generations', {
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model: images.model, prompt, n: 1, size, quality: config.imageQuality, output_format: 'webp', output_compression: 82 }),
-  }, images, usage);
+// Calls send(fields) and adapts to the model: drops a field the API rejects, and moves on to the next
+// candidate model when this one does not exist for the key. images is shared, so later calls start adapted.
+async function adaptive(images, fields, send, onEvent) {
+  images.dropped ??= new Set();
+  for (;;) {
+    const model = images.model;
+    const current = Object.fromEntries(Object.entries({ model, ...fields }).filter(([k, v]) => v !== undefined && !images.dropped.has(k)));
+    try { return await send(current); } catch (error) {
+      if (images.model !== model) continue;
+      if (modelMissing(error) && images.fallbacks?.length) {
+        images.model = images.fallbacks.shift();
+        images.dropped.clear();
+        onEvent?.({ stage: 'paint', level: 'warn', message: `Image model ${model} is not available (${error.message}); trying ${images.model}` });
+        continue;
+      }
+      const field = error.status === 400 && OPTIONAL.find(f => f in current && (error.param === f || new RegExp(`\\b${f}\\b`, 'i').test(error.message)));
+      if (field) { images.dropped.add(field); continue; }
+      throw error;
+    }
+  }
+}
+
+function generate(prompt, size, images, usage, onEvent) {
+  return adaptive(images, { prompt, n: 1, size, quality: config.imageQuality, output_format: 'webp', output_compression: 82 },
+    fields => request('/images/generations', { headers: { 'content-type': 'application/json' }, body: JSON.stringify(fields) }, images, usage), onEvent);
 }
 
 // The edits endpoint takes reference images; high input fidelity keeps faces and outfits closest to the sheets.
-async function edit(prompt, size, refs, images, usage, fidelity = true) {
-  const form = new FormData();
-  form.append('model', images.model);
-  form.append('prompt', prompt);
-  form.append('size', size);
-  form.append('quality', config.imageQuality);
-  form.append('output_format', 'webp');
-  form.append('output_compression', '82');
-  if (fidelity) form.append('input_fidelity', 'high');
-  for (const ref of refs) form.append('image[]', new Blob([ref.data], { type: 'image/webp' }), `${ref.id}.webp`);
-  try {
-    return await request('/images/edits', { body: form }, images, usage);
-  } catch (error) {
-    if (fidelity && /input_fidelity/i.test(error.message)) return edit(prompt, size, refs, images, usage, false);
-    throw error;
-  }
+function edit(prompt, size, refs, images, usage, onEvent) {
+  return adaptive(images, { prompt, size, quality: config.imageQuality, output_format: 'webp', output_compression: 82, input_fidelity: 'high' }, fields => {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
+    for (const ref of refs) form.append('image[]', new Blob([ref.data], { type: 'image/webp' }), `${ref.id}.webp`);
+    return request('/images/edits', { body: form }, images, usage);
+  }, onEvent);
 }
 
 async function withRetries(fn) {
@@ -122,6 +161,13 @@ export async function paintAll(siteDir, images, look, onEvent = () => {}, { sign
   const backdrops = only ? plan.images.filter(i => only.images.has(i.id)) : plan.images;
   // errors maps a picture id to why it could not be painted.
   const results = { painted: [], failed: [], sheets: [], errors: {} };
+  const prepared = await prepareImages(images);
+  if (prepared.refused) {
+    results.keyRefused = prepared.refused;
+    onEvent({ stage: 'paint', level: 'error', message: `The image API refused the key for paintings: ${prepared.refused}` });
+    for (const c of allCharacters) if (!existsSync(join(siteDir, 'art', `char-${c.id}.webp`))) results.failed.push(`char-${c.id}`);
+    return results;
+  }
   let refused = null;
   const halted = () => Boolean(refused);
   const refuse = error => {
@@ -142,12 +188,12 @@ export async function paintAll(siteDir, images, look, onEvent = () => {}, { sign
   };
 
   if (characters.length) {
-    onEvent({ stage: 'paint', message: `Painting ${characters.length} character model sheets with ${images.model}` });
+    onEvent({ stage: 'paint', message: `Painting ${characters.length} character model sheets with ${images.model}${images.fallbacks?.length ? ` (fallbacks: ${images.fallbacks.slice(0, 3).join(', ')})` : ''}` });
     await pool(characters, async character => {
       const id = `char-${character.id}`;
       const started = Date.now();
       try {
-        const data = await withRetries(() => generate(composeCharacterPrompt(plan, character, look), '1024x1024', images, usage));
+        const data = await withRetries(() => generate(composeCharacterPrompt(plan, character, look), '1024x1024', images, usage, onEvent));
         save(id, data, started, `the model sheet for ${character.name}`);
         sheets.set(character.id, { id, name: character.name, data });
         results.sheets.push(id);
@@ -168,14 +214,14 @@ export async function paintAll(siteDir, images, look, onEvent = () => {}, { sign
       let data;
       if (refs.length) {
         try {
-          data = await withRetries(() => edit(composePrompt(plan, image, look, { sides: sides[image.id], refs }), '1536x1024', refs, images, usage));
+          data = await withRetries(() => edit(composePrompt(plan, image, look, { sides: sides[image.id], refs }), '1536x1024', refs, images, usage, onEvent));
         } catch (error) {
           if (/safety|moderation|content policy/i.test(error.message)) throw error;
           editsBroken = true;
           onEvent({ stage: 'paint', level: 'warn', message: `Painting from model sheets failed (${error.message}); painting from descriptions instead` });
         }
       }
-      data ??= await withRetries(() => generate(composePrompt(plan, image, look, { sides: sides[image.id] }), '1536x1024', images, usage));
+      data ??= await withRetries(() => generate(composePrompt(plan, image, look, { sides: sides[image.id] }), '1536x1024', images, usage, onEvent));
       save(image.id, data, started, image.id);
       results.painted.push(image.id);
     } catch (error) {

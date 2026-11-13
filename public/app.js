@@ -237,13 +237,14 @@ function setupModel() {
     $('llm-model').value = saved.model || '';
     $('llm-key').value = saved.apiKey || '';
     $('img-key').value = saved.imageKey || '';
+    $('img-model').value = saved.imageModel || '';
     $('remember').checked = true;
   } else {
     select.value = 'anthropic-messages';
     applyPreset();
   }
   select.addEventListener('change', applyPreset);
-  for (const id of ['llm-base', 'llm-model', 'llm-key', 'img-key']) $(id).addEventListener('input', modelChanged);
+  for (const id of ['llm-base', 'llm-model', 'llm-key', 'img-key', 'img-model']) $(id).addEventListener('input', modelChanged);
   $('remember').addEventListener('change', () => { if (!$('remember').checked) storage(s => s.removeItem(SETTINGS_KEY)); });
   modelChanged();
 }
@@ -262,7 +263,7 @@ const reusesModelKey = m => m.api === 'openai-responses' && m.baseUrl.replace(/\
 function modelSettings() {
   const m = {
     api: $('llm-api').value, baseUrl: $('llm-base').value.trim(), model: $('llm-model').value.trim(),
-    apiKey: $('llm-key').value.trim(), imageKey: $('img-key').value.trim(),
+    apiKey: $('llm-key').value.trim(), imageKey: $('img-key').value.trim(), imageModel: $('img-model').value.trim(),
   };
   if (reusesModelKey(m)) m.imageKey = '';
   return m;
@@ -274,7 +275,7 @@ function modelChanged() {
   $('img-row').hidden = reusesKey;
   const painted = (reusesKey && m.apiKey) || m.imageKey;
   $('art-note').textContent = painted
-    ? `Backdrops are painted with ${state.me.imageModel}.`
+    ? `Backdrops are painted with ${m.imageModel || `the newest image model your key can use (${state.me.imageModel} first)`}.`
     : 'Without an OpenAI key for paintings, Pi draws the backdrops itself as SVG.';
   updateGo();
 }
@@ -512,7 +513,7 @@ $('go').addEventListener('click', async () => {
     title: $('doc-title').value.trim() || state.doc.name, filename: state.doc.name, text: state.doc.text,
     look: lookSettings(),
     llm: { api: m.api, baseUrl: m.baseUrl, model: m.model, apiKey: m.apiKey },
-    images: { apiKey: m.imageKey },
+    images: { apiKey: m.imageKey, model: m.imageModel || undefined },
   });
 });
 
@@ -991,7 +992,7 @@ $('tweak-go').addEventListener('click', async () => {
     message: message || (asked.length && c.total ? `Changes discussed with the editor: ${asked.join(' / ')}`.slice(0, 3900) : ''),
     from: $('tweak-from').value || undefined,
     brief: c.brief ? ed.draft.brief : undefined, script: c.script ? ed.draft.script : undefined, repaint: [...ed.repaint],
-    llm: { api: m.api, baseUrl: m.baseUrl, model: m.model, apiKey: m.apiKey }, images: { apiKey: m.imageKey },
+    llm: { api: m.api, baseUrl: m.baseUrl, model: m.model, apiKey: m.apiKey }, images: { apiKey: m.imageKey, model: m.imageModel || undefined },
   };
   ed.chat.push({ role: 'assistant', text: 'Rebuilding the book with these changes. Follow along below.' });
   storage(s => s.setItem(chatKey(id), JSON.stringify(ed.chat.slice(-40))));
