@@ -43,3 +43,18 @@ export function listStories(user, limit = 60) {
     .slice(0, limit)
     .map(({ account, ...story }) => story);
 }
+
+// One book on the caller's shelf, or null: a book on someone else's shelf is never found.
+export function getStory(account, id) {
+  if (!account || !/^[0-9]{8}-[a-z0-9]{6}$/.test(String(id))) return null;
+  const story = readJson(join(accountDir(account), `${id}.json`));
+  return story && story.account === account ? story : null;
+}
+
+export function updateStory(account, id, changes) {
+  const story = getStory(account, id);
+  if (!story) throw Object.assign(new Error('Unknown book'), { status: 404 });
+  const { account: _, ...rest } = { ...story, ...changes };
+  saveStory(account, rest);
+  return rest;
+}

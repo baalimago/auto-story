@@ -24,7 +24,7 @@
   </header>
 
   <main>
-    <section class="hero">
+    <section id="hero" class="hero">
       <h1>Drop a document.<br><em>Get a picture book.</em></h1>
       <p class="lede">An agent reads your PDF or text, invents a gentle story world for its ideas, paints the pages,
         and deploys the book as its own app on Wasmer Edge.</p>
@@ -98,6 +98,44 @@
       </div>
     </section>
 
+    <section id="editor" class="card editor" hidden>
+      <div class="editor-head">
+        <a id="editor-back" class="ghost back" href="#">← Shelf</a>
+        <div class="editor-title">
+          <h2 id="editor-title">Edit</h2>
+          <p id="editor-sub" class="muted"></p>
+        </div>
+        <a id="editor-open" class="ghost" href="#" target="_blank" rel="noopener">Open the book ↗</a>
+      </div>
+      <p id="editor-reason" class="editor-reason" hidden></p>
+      <p class="lede small">This is the book's <strong>mood board</strong>: the concepts it teaches, its characters, its plot and its pictures.
+        Change anything, say what you want in the chat, and the book is rebuilt from the earliest thing you changed and redeployed to the same address.</p>
+
+      <div id="board" class="board"></div>
+
+      <div class="chat">
+        <h3>Chat with the author</h3>
+        <ol id="history" class="history"></ol>
+        <div class="composer">
+          <textarea id="tweak-message" rows="3" maxlength="4000" placeholder="What should change? For example: make Tod braver, explain elections with a race instead, use shorter sentences on page 4…"></textarea>
+          <div class="composer-row">
+            <label>Re-run from
+              <select id="tweak-from">
+                <option value="">Earliest thing I changed (default)</option>
+                <option value="build">The book only (fast)</option>
+                <option value="script">The script (rewrites the story)</option>
+                <option value="understand">The concepts (re-reads the document)</option>
+              </select>
+            </label>
+            <span id="dirty-note" class="muted"></span>
+            <button id="tweak-go" class="primary" type="button" disabled>Apply changes</button>
+          </div>
+          <span id="tweak-status" class="status" role="status"></span>
+        </div>
+        <div id="editor-model-slot"></div>
+      </div>
+    </section>
+
     <section id="progress" class="card" hidden>
       <div class="progress-head">
         <h2 id="progress-title">Writing your book</h2>
@@ -118,7 +156,7 @@
       <ol id="log" class="log" aria-live="polite"></ol>
     </section>
 
-    <section class="gallery-wrap">
+    <section id="shelf" class="gallery-wrap">
       <h2>Your shelf</h2>
       <div id="gallery" class="gallery"><p class="empty">Sign in to see the books you have made.</p></div>
     </section>

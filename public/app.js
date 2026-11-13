@@ -1,7 +1,7 @@
 const PDFJS = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/6.3.289';
 const STAGES = ['prepare', 'understand', 'script', 'build', 'check', 'paint', 'deploy', 'done'];
 const $ = id => document.getElementById(id);
-const state = { me: null, wasmer: null, doc: null, buildId: null, started: 0, timer: null };
+const state = { me: null, wasmer: null, doc: null, buildId: null, started: 0, timer: null, editing: null, board: null };
 
 function storage(fn) { try { return fn(localStorage); } catch { return null; } }
 function escape(text) {
@@ -53,6 +53,7 @@ async function loadMe() {
   renderGate();
   updateGo();
   loadGallery();
+  route();
 }
 
 function checkToken(token) {
@@ -64,7 +65,7 @@ function renderAccount() {
   const user = state.wasmer?.user;
   if (!user) { account.innerHTML = ''; return; }
   account.innerHTML = `<span class="who">${WASMER_MARK}<strong>${escape(user.username)}</strong></span><button class="ghost" id="logout">Sign out</button>`;
-  $('logout').addEventListener('click', () => { dropToken(); state.wasmer = null; renderAccount(); renderGate(); updateGo(); loadGallery(); });
+  $('logout').addEventListener('click', () => { dropToken(); state.wasmer = null; renderAccount(); renderGate(); updateGo(); loadGallery(); route(); });
 }
 
 function renderGate(message, isError = true) {
@@ -123,6 +124,7 @@ async function signIn(event) {
       : `${user.username} is not on this builder's allowlist.`, !user.allowed);
     updateGo();
     loadGallery();
+    route();
   } catch (error) {
     renderGate(error.message);
   }
@@ -276,6 +278,7 @@ function updateGo() {
   const hasModel = m && m.apiKey && m.model && (m.baseUrl || m.api !== 'openai-completions');
   const ready = state.doc && state.wasmer?.user?.allowed && hasModel && !state.buildId;
   $('go').disabled = !ready;
+  if (typeof updateTweak === 'function') updateTweak();
 }
 
 const drop = $('drop');
@@ -388,6 +391,7 @@ function handleEvent(event) {
   }
   if (event.stage === 'failed') {
     markStage(lastStage, true);
+    if (state.editing) setTimeout(() => loadBoard(state.editing), 500);
     showResult(`<strong>The book could not be finished.</strong><br>${escape(event.message)}${event.usage ? `<br><small>Spent so far: ${escape(formatUsage(event.usage))}</small>` : ''}`, true);
     finish();
   } else if (event.stage === 'done' && event.result) {
@@ -397,6 +401,7 @@ function handleEvent(event) {
       <br><small>${escape(r.owner)}/${escape(r.appName)} · ${escape(formatUsage(r.usage))} · ${r.pages} pages · ${r.images} ${r.artMode === 'svg' ? 'drawings' : 'paintings'} · ${escape(r.model || '')} · ${r.minutes} min</small>`);
     finish();
     loadGallery();
+    if (state.editing) loadBoard(state.editing);
   } else if (STAGES.includes(event.stage)) {
     lastStage = event.stage;
     markStage(event.stage);
@@ -468,16 +473,20 @@ $('go').addEventListener('click', async () => {
   if ($('gate').classList.contains('welcome')) $('gate').hidden = true;
   const m = modelSettings();
   if ($('remember').checked) storage(s => s.setItem(SETTINGS_KEY, JSON.stringify(m)));
+  await startStream('/api/builds', {
+    title: $('doc-title').value.trim() || state.doc.name, filename: state.doc.name, text: state.doc.text,
+    look: lookSettings(),
+    llm: { api: m.api, baseUrl: m.baseUrl, model: m.model, apiKey: m.apiKey },
+    images: { apiKey: m.imageKey },
+  });
+});
+
+// Start a build, tweak or rollback and follow its event stream (reattaching if the connection drops).
+async function startStream(path, body) {
   resetProgress();
   try {
-    const response = await fetch('/api/builds', {
-      method: 'POST', credentials: 'same-origin', headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({
-        title: $('doc-title').value.trim() || state.doc.name, filename: state.doc.name, text: state.doc.text,
-        look: lookSettings(),
-        llm: { api: m.api, baseUrl: m.baseUrl, model: m.model, apiKey: m.apiKey },
-        images: { apiKey: m.imageKey },
-      }),
+    const response = await fetch(path, {
+      method: 'POST', credentials: 'same-origin', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body),
     });
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || `HTTP ${response.status}`);
     const terminal = await consume(response);
@@ -488,7 +497,7 @@ $('go').addEventListener('click', async () => {
     markStage('prepare', true);
     finish();
   }
-});
+}
 
 $('abort').addEventListener('click', async () => {
   if (!state.buildId || !confirm('Abort this build? Pi stops, and nothing further is painted or deployed.')) return;
@@ -532,11 +541,12 @@ async function loadGallery() {
     const { stories } = await api('/api/stories');
     if (!stories.length) { gallery.innerHTML = '<p class="empty">No books yet. Drop a document to make your first one.</p>'; return; }
     $('gallery').innerHTML = stories.map(s => `
-      <a class="book" href="${escape(s.url)}" target="_blank" rel="noopener">
-        <div class="cover" style="${s.cover ? `background-image:url('${escape(s.cover)}')` : ''}"></div>
+      <div class="book">
+        <a class="cover" href="${escape(s.url)}" target="_blank" rel="noopener" style="${s.cover ? `background-image:url('${escape(s.cover)}')` : ''}" aria-label="Read ${escape(s.title)}"></a>
         <div class="meta"><h3>${escape(s.title)}</h3><p>${escape(s.summary || s.metaphor || '')}</p>
-        <p>${new Date(s.createdAt).toLocaleDateString()}</p></div>
-      </a>`).join('');
+        <p>${new Date(s.updatedAt || s.createdAt).toLocaleDateString()}${s.version > 1 ? ` · version ${s.version}` : ''}</p>
+        <div class="book-actions"><a href="${escape(s.url)}" target="_blank" rel="noopener">Read ↗</a><a href="#edit/${escape(s.id)}">Edit</a></div></div>
+      </div>`).join('');
   } catch (error) {
     gallery.innerHTML = `<p class="empty">Could not load your shelf: ${escape(error.message)}</p>`;
   }
@@ -545,3 +555,216 @@ async function loadGallery() {
 loadMe().catch(error => setStatus(error.message, true));
 const resume = storage(s => s.getItem('auto-story-build'));
 if (resume) { resetProgress(); follow(resume); }
+
+// ── The owner's edit view: mood board, chat and versions of one book ─────────────────────────────
+// #edit/<id> opens it. Every field is bound to a path in brief.json or script.json; "Apply changes"
+// sends the edited files, the message and the pictures to repaint, and the server re-runs the book
+// from the earliest stage those touch, then redeploys the same app.
+function route() {
+  const id = location.hash.match(/^#edit\/([0-9]{8}-[a-z0-9]{6})$/)?.[1];
+  if (id && state.wasmer?.user) openEditor(id);
+  else closeEditor();
+}
+window.addEventListener('hashchange', route);
+
+function openEditor(id) {
+  state.editing = id;
+  for (const s of ['hero', 'builder', 'shelf']) $(s).hidden = true;
+  $('editor').hidden = false;
+  $('editor-model-slot').appendChild($('model'));
+  loadBoard(id);
+}
+
+function closeEditor() {
+  if (!state.editing && $('editor').hidden) return;
+  state.editing = null;
+  state.board = null;
+  for (const s of ['hero', 'builder', 'shelf']) $(s).hidden = false;
+  $('editor').hidden = true;
+  $('builder').insertBefore($('model'), $('builder').querySelector('.actions'));
+}
+
+$('editor-back').addEventListener('click', e => { e.preventDefault(); history.pushState(null, '', location.pathname); route(); });
+
+async function loadBoard(id) {
+  try {
+    const board = await api(`/api/stories/${id}/board`);
+    if (state.editing !== id) return;
+    state.board = board;
+    renderBoard();
+    if (board.running && board.running !== state.buildId) { resetProgress(); follow(board.running); }
+  } catch (error) {
+    $('board').innerHTML = `<p class="empty">Could not open this book: ${escape(error.message)}</p>`;
+    $('history').innerHTML = '';
+  }
+}
+
+const getPath = (obj, path) => path.split('.').reduce((o, k) => o?.[k], obj);
+function setPath(obj, path, value) {
+  const keys = path.split('.');
+  const last = keys.pop();
+  const target = keys.reduce((o, k) => o[k], obj);
+  target[last] = value;
+}
+
+function field(doc, path, label, { rows = 2, input = false, hint = '' } = {}) {
+  const value = getPath(state.board[doc], path) ?? '';
+  const attrs = `data-doc="${doc}" data-path="${escape(path)}" ${state.board.editable ? '' : 'disabled'}`;
+  const control = input ? `<input ${attrs} value="${escape(value)}">` : `<textarea ${attrs} rows="${rows}">${escape(value)}</textarea>`;
+  return `<label class="f"><span>${escape(label)}${hint ? ` <small>${escape(hint)}</small>` : ''}</span>${control}</label>`;
+}
+
+function artUrl(file) {
+  const b = state.board;
+  if (!b.art.includes(file)) return null;
+  return `${b.story.url.replace(/\/$/, '')}/art/${file}?v=${b.version}`;
+}
+function picture(id, alt) {
+  const b = state.board;
+  const ext = b.story.artMode === 'svg' ? 'svg' : 'webp';
+  const url = artUrl(`${id}.${ext}`);
+  const repaint = ext === 'webp' && b.canRollback ? `<label class="repaint"><input type="checkbox" data-repaint="${escape(id)}"> Repaint</label>` : '';
+  return `<figure class="pic">${url ? `<img src="${escape(url)}" alt="${escape(alt)}" loading="lazy">` : '<div class="nopic">no picture yet</div>'}${repaint}</figure>`;
+}
+
+function renderBoard() {
+  const b = state.board;
+  const s = b.story;
+  $('editor-title').textContent = s.title;
+  $('editor-sub').textContent = [`version ${b.version || 1}`, s.look, s.model, `${s.pages} pages`].filter(Boolean).join(' · ');
+  $('editor-open').href = s.url;
+  $('editor-reason').hidden = !b.reason;
+  $('editor-reason').textContent = b.reason || '';
+  const brief = b.brief, script = b.script;
+  const cards = [];
+  if (brief) {
+    cards.push(`<article class="board-card concept"><h3>Core concept</h3>
+      ${field('brief', 'question', 'The question the book answers')}
+      ${field('brief', 'answer', 'The answer', { rows: 3 })}
+      ${(brief.concepts || []).map((c, i) => `<div class="item">
+        ${field('brief', `concepts.${i}.name`, `Concept ${i + 1}`, { input: true })}
+        ${field('brief', `concepts.${i}.plain`, 'For a 10-12 year old', { rows: 3 })}
+        <details><summary>Precise explanation</summary>${field('brief', `concepts.${i}.precise`, 'For grown-ups', { rows: 4 })}</details>
+      </div>`).join('')}
+      ${(brief.misconceptions || []).length ? `<details class="item"><summary>Misconceptions to avoid (${brief.misconceptions.length})</summary>
+        ${brief.misconceptions.map((m, i) => `${field('brief', `misconceptions.${i}.wrong`, 'Wrong')}${field('brief', `misconceptions.${i}.right`, 'Right')}`).join('')}</details>` : ''}
+    </article>`);
+  }
+  if (script) {
+    cards.push(`<article class="board-card characters"><h3>Characters</h3>
+      ${(script.characters || []).map((c, i) => `<div class="item with-pic">
+        ${picture(`char-${c.id}`, c.name)}
+        <div>${field('script', `characters.${i}.name`, 'Name', { input: true })}
+        ${field('script', `characters.${i}.is`, 'Stands for', { input: true })}
+        ${field('script', `characters.${i}.personality`, 'Personality', { input: true })}
+        ${field('script', `characters.${i}.look`, 'Look', { rows: 4, hint: 'changing it repaints this character' })}</div>
+      </div>`).join('')}
+    </article>`);
+    cards.push(`<article class="board-card plot"><h3>Plotline</h3>
+      ${field('script', 'title', 'Title', { input: true })}
+      ${field('script', 'subtitle', 'Subtitle', { input: true })}
+      ${field('script', 'metaphor.world', 'The story world', { rows: 3 })}
+      <h4>Ideas, in teaching order</h4>
+      ${(script.ideas || []).map((idea, i) => `<div class="item">${field('script', `ideas.${i}.title`, `Idea ${i + 1}`, { input: true })}${field('script', `ideas.${i}.text`, 'What it says')}</div>`).join('')}
+      <h4>Pages</h4>
+      ${(script.pages || []).map((p, i) => `<div class="item page">
+        ${field('script', `pages.${i}.text`, i === 0 ? 'Cover' : `Page ${i} · ${p.idea || ''} · ${p.scene}${p.interaction?.type ? ` · ${p.interaction.type}` : ''}`, { rows: 3 })}
+        ${i ? `<details><summary>What it teaches, interaction and note</summary>
+          ${field('script', `pages.${i}.teaches`, 'Teaches')}
+          ${p.interaction ? field('script', `pages.${i}.interaction.plan`, `Interaction (${p.interaction.type})`, { rows: 3 }) : ''}
+          ${field('script', `pages.${i}.note`, 'Note for grown-ups', { rows: 3 })}</details>` : ''}
+      </div>`).join('')}
+    </article>`);
+    cards.push(`<article class="board-card scenes"><h3>Scenes</h3>
+      ${(script.scenes || []).map((sc, i) => `<div class="item with-pic">
+        ${picture(sc.id, sc.shows)}
+        <div><strong>${escape(sc.id)}</strong> <span class="muted">${escape((sc.characters || []).join(', '))}</span>
+        ${field('script', `scenes.${i}.shows`, 'What the picture shows', { rows: 4 })}</div>
+      </div>`).join('')}
+    </article>`);
+  } else if (b.art.length) {
+    cards.push(`<article class="board-card scenes"><h3>Pictures</h3><div class="pics">${b.art.map(f => `<img src="${escape(artUrl(f))}" alt="${escape(f)}" loading="lazy">`).join('')}</div></article>`);
+  }
+  $('board').innerHTML = cards.join('') || '<p class="empty">Nothing to show for this book.</p>';
+  renderHistory();
+  $('tweak-message').disabled = !b.editable;
+  $('tweak-from').disabled = !b.editable;
+  updateTweak();
+}
+
+function renderHistory() {
+  const b = state.board;
+  $('history').innerHTML = [...b.versions].reverse().map(v => {
+    const what = v.kind === 'build' ? 'First edition'
+      : v.kind === 'rollback' ? `Rolled back to version ${v.to}`
+      : [v.changed?.includes('brief') && 'edited the concepts', v.changed?.includes('script') && 'edited the script',
+         v.repainted?.length && `repainted ${v.repainted.length} picture${v.repainted.length === 1 ? '' : 's'}`].filter(Boolean).join(', ');
+    const live = v.n === b.version;
+    return `<li class="${live ? 'live' : ''}">
+      ${v.kind === 'tweak' && v.message ? `<p class="bubble">${escape(v.message)}</p>` : ''}
+      <div class="ver"><strong>Version ${v.n}</strong> · ${escape(what || 'rebuilt the book')} · ${escape(v.by || '')} · ${escape(new Date(v.at).toLocaleString())}
+        ${live ? '<span class="pill">live</span>' : b.canRollback ? `<button class="ghost small" data-rollback="${v.n}" type="button">Roll back to this</button>` : ''}</div>
+    </li>`;
+  }).join('') || '<li class="muted">No versions yet.</li>';
+  $('history').scrollTop = $('history').scrollHeight;
+}
+
+// What the owner changed on the board.
+function boardEdits() {
+  const b = state.board;
+  const docs = { brief: structuredClone(b.brief), script: structuredClone(b.script) };
+  let count = 0;
+  for (const el of $('board').querySelectorAll('[data-path]')) {
+    const original = getPath(b[el.dataset.doc], el.dataset.path) ?? '';
+    const changed = el.value !== String(original);
+    el.classList.toggle('dirty', changed);
+    if (changed) { count++; setPath(docs[el.dataset.doc], el.dataset.path, el.value); }
+  }
+  const touched = doc => [...$('board').querySelectorAll(`[data-doc="${doc}"].dirty`)].length > 0;
+  const repaint = [...$('board').querySelectorAll('[data-repaint]:checked')].map(el => el.dataset.repaint);
+  return { count, brief: touched('brief') ? docs.brief : null, script: touched('script') ? docs.script : null, repaint };
+}
+
+function updateTweak() {
+  if (!state.board) return;
+  const edits = boardEdits();
+  const message = $('tweak-message').value.trim();
+  $('dirty-note').textContent = [edits.count && `${edits.count} edit${edits.count === 1 ? '' : 's'} on the board`,
+    edits.repaint.length && `${edits.repaint.length} picture${edits.repaint.length === 1 ? '' : 's'} to repaint`].filter(Boolean).join(' · ');
+  const m = modelSettings();
+  const needsModel = Boolean(message || edits.brief || edits.script || $('tweak-from').value);
+  const hasModel = m.apiKey && m.model && (m.baseUrl || m.api !== 'openai-completions');
+  const hasImages = m.imageKey || (m.api === 'openai-responses' && m.apiKey);
+  const anything = needsModel || edits.repaint.length;
+  $('tweak-go').disabled = !state.board.canRollback || !anything || state.buildId || (needsModel ? !hasModel : !hasImages);
+  $('tweak-status').textContent = anything && needsModel && !hasModel ? 'Add your model settings below to apply changes.'
+    : anything && !needsModel && !hasImages ? 'Repainting needs an OpenAI key for paintings (below).' : '';
+}
+
+$('board').addEventListener('input', updateTweak);
+$('board').addEventListener('change', updateTweak);
+$('tweak-message').addEventListener('input', updateTweak);
+$('tweak-from').addEventListener('change', updateTweak);
+
+$('tweak-go').addEventListener('click', async () => {
+  const id = state.editing;
+  const edits = boardEdits();
+  const m = modelSettings();
+  if ($('remember').checked) storage(s => s.setItem(SETTINGS_KEY, JSON.stringify(m)));
+  $('tweak-go').disabled = true;
+  const body = {
+    message: $('tweak-message').value.trim(), from: $('tweak-from').value || undefined,
+    brief: edits.brief || undefined, script: edits.script || undefined, repaint: edits.repaint,
+    llm: { api: m.api, baseUrl: m.baseUrl, model: m.model, apiKey: m.apiKey }, images: { apiKey: m.imageKey },
+  };
+  $('tweak-message').value = '';
+  $('tweak-from').value = '';
+  await startStream(`/api/stories/${id}/tweaks`, body);
+});
+
+$('history').addEventListener('click', async e => {
+  const n = e.target.closest('[data-rollback]')?.dataset.rollback;
+  if (!n || state.buildId) return;
+  if (!confirm(`Roll the live book back to version ${n}? Nothing is lost: this becomes a new version, and you can roll forward again.`)) return;
+  await startStream(`/api/stories/${state.editing}/rollback`, { version: Number(n) });
+});

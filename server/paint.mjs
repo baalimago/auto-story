@@ -100,11 +100,19 @@ async function pool(items, fn, signal) {
 }
 
 // sides maps an image id to where the words sit on the pages that use it (from check.mjs).
-export async function paintAll(siteDir, images, look, onEvent = () => {}, { signal, usage, sides = {} } = {}) {
+// only = { sheets: Set<character id>, images: Set<image id> } repaints just those (an owner's tweak);
+// the other model sheets are read from disk and still serve as references.
+export async function paintAll(siteDir, images, look, onEvent = () => {}, { signal, usage, sides = {}, only } = {}) {
   const plan = JSON.parse(readFileSync(join(siteDir, 'art/plan.json'), 'utf8'));
-  const characters = characterList(plan);
+  const allCharacters = characterList(plan);
+  const characters = only ? allCharacters.filter(c => only.sheets.has(c.id)) : allCharacters;
+  const backdrops = only ? plan.images.filter(i => only.images.has(i.id)) : plan.images;
   const results = { painted: [], failed: [], sheets: [] };
   const sheets = new Map();
+  if (only) for (const c of allCharacters.filter(c => !only.sheets.has(c.id))) {
+    const file = join(siteDir, 'art', `char-${c.id}.webp`);
+    if (existsSync(file)) sheets.set(c.id, { id: `char-${c.id}`, name: c.name, data: readFileSync(file) });
+  }
   const save = (id, data, started, what) => {
     writeFileSync(join(siteDir, 'art', `${id}.webp`), data);
     onEvent({ stage: 'paint', message: `Painted ${what} (${Math.round(data.length / 1024)} KiB, ${Math.round((Date.now() - started) / 1000)}s)`, image: id });
@@ -127,9 +135,9 @@ export async function paintAll(siteDir, images, look, onEvent = () => {}, { sign
     }, signal);
   }
 
-  onEvent({ stage: 'paint', message: `Painting ${plan.images.length} backdrops${sheets.size ? ' from the model sheets' : ''}` });
+  if (backdrops.length) onEvent({ stage: 'paint', message: `Painting ${backdrops.length} backdrop${backdrops.length === 1 ? '' : 's'}${sheets.size ? ' from the model sheets' : ''}` });
   let editsBroken = false;
-  await pool(plan.images, async image => {
+  await pool(backdrops, async image => {
     const started = Date.now();
     const refs = editsBroken ? [] : (image.characters || []).map(id => sheets.get(id)).filter(Boolean);
     try {
@@ -152,6 +160,6 @@ export async function paintAll(siteDir, images, look, onEvent = () => {}, { sign
     }
   }, signal);
   // The cast page links to every sheet; drop links to sheets that were never painted.
-  for (const c of characters) if (!existsSync(join(siteDir, 'art', `char-${c.id}.webp`))) results.failed.push(`char-${c.id}`);
+  for (const c of allCharacters) if (!existsSync(join(siteDir, 'art', `char-${c.id}.webp`))) results.failed.push(`char-${c.id}`);
   return results;
 }

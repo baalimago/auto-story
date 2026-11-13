@@ -9,8 +9,9 @@ import { listFiles, zipDirectory } from './zip.mjs';
 import { deployZip, waitLive } from './wasmer_api.mjs';
 import { saveStory } from './stories.mjs';
 import { prepareWorkspace, createContext, runStages, archiveWork, copyDir } from './stages.mjs';
+import { saveVersion } from './versions.mjs';
 
-const WORK_ROOT = process.env.WORK_ROOT || '/tmp/auto-story';
+export const WORK_ROOT = process.env.WORK_ROOT || '/tmp/auto-story';
 const MAX_ACTIVE = Number(process.env.MAX_ACTIVE_BUILDS || 2);
 const jobs = new Map();
 
@@ -28,11 +29,17 @@ export function slugify(text, max = 28) {
 }
 
 export function startBuild({ user, title, filename, text, llm, images, wasmerToken, look }) {
+  return startJob({ user, title, filename, llm, images, wasmerToken }, (job, ctx) => run(job, { user, title, filename, text, look, ...ctx }));
+}
+
+// A job is a build or a tweak: it streams events, can be aborted from any instance, and keeps its log
+// in /data/builds/<job id>/. The secrets (model key, image key, Wasmer token) live only in memory.
+export function startJob({ user, title, filename = '', llm = null, images = null, wasmerToken, extra = {} }, runner) {
   if (activeBuilds() >= MAX_ACTIVE) throw Object.assign(new Error('This instance is busy with other books; try again in a few minutes'), { status: 429 });
   const id = `${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8)}`;
   const wasmer = { token: wasmerToken, owner: config.storyOwner || user.username };
   const job = { id, user: user.username, account: user.account, title, filename, status: 'running', events: [], listeners: new Set(), startedAt: Date.now(), controller: new AbortController(),
-    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, images: 0, imageTokens: 0 } };
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, images: 0, imageTokens: 0 }, ...extra };
   jobs.set(id, job);
   const archive = join(buildsDir(), id);
   mkdirSync(archive, { recursive: true });
@@ -48,13 +55,13 @@ export function startBuild({ user, title, filename, text, llm, images, wasmerTok
     job.controller.abort();
   }, 3000);
   const emit = event => {
-    const full = { at: Date.now(), ...event, message: redact(event.message ?? '', [llm.apiKey, images?.apiKey, wasmer.token]) };
+    const full = { at: Date.now(), ...event, message: redact(event.message ?? '', [llm?.apiKey, images?.apiKey, wasmer.token]) };
     job.events.push(full);
     if (job.events.length > 2000) job.events.splice(0, job.events.length - 2000);
     try { appendFileSync(join(archive, 'events.ndjson'), JSON.stringify(full) + '\n'); } catch {}
     for (const listener of job.listeners) listener(full);
   };
-  run(job, { user, title, filename, text, llm, images, wasmer, look }, emit, archive)
+  Promise.resolve().then(() => runner(job, { llm, images, wasmer, emit, archive }))
     .then(result => { job.status = 'done'; job.result = result; emit({ stage: 'done', kind: 'result', message: `Live at ${result.url}`, result }); })
     .catch(error => {
       job.status = 'failed';
@@ -63,7 +70,7 @@ export function startBuild({ user, title, filename, text, llm, images, wasmerTok
     })
     .finally(() => {
       clearInterval(abortWatch);
-      llm.apiKey = null;
+      if (llm) llm.apiKey = null;
       wasmer.token = null;
       if (images) images.apiKey = null;
       for (const listener of job.listeners) listener(null);
@@ -73,7 +80,19 @@ export function startBuild({ user, title, filename, text, llm, images, wasmerTok
   return job;
 }
 
-async function run(job, { user, title, filename, text, llm, images, wasmer, look }, emit, archive) {
+// Pack a site and deploy it as appName (a new app, or a new version of the same app), then wait for it.
+export async function deploySite({ siteDir, appName, owner, token, emit, signal }) {
+  const files = listFiles(siteDir);
+  const zip = zipDirectory(siteDir, files);
+  emit({ stage: 'deploy', message: `Packed ${files.length} files` });
+  const deployed = await deployZip({ zip, appName, owner, token, onEvent: emit, signal });
+  emit({ stage: 'deploy', message: `Waiting for ${deployed.url} to answer` });
+  const live = await waitLive(deployed.url, deployed.versionId);
+  if (!live) emit({ stage: 'deploy', level: 'warn', message: 'The app is deployed but not answering yet; it may need another minute' });
+  return deployed;
+}
+
+async function run(job, { user, title, filename, text, llm, images, wasmer, look, emit, archive }) {
   const workDir = join(WORK_ROOT, job.id);
   const doc = prepareWorkspace({ workDir, title, filename, text });
   copyDir(join(workDir, 'source'), join(archive, 'source'));
@@ -95,15 +114,9 @@ async function run(job, { user, title, filename, text, llm, images, wasmer, look
   const bookTitle = String(pi.final?.title || title).slice(0, 120);
   if (signal.aborted) throw new Error('Aborted');
 
-  const files = listFiles(siteDir);
-  const zip = zipDirectory(siteDir, files);
-  emit({ stage: 'deploy', message: `Packed ${files.length} files` });
   // App URLs are public on Wasmer Edge, so the suffix is random enough that a book can't be guessed.
   const appName = `story-${slugify(bookTitle, 22)}-${unguessable()}`;
-  const deployed = await deployZip({ zip, appName, owner, token: wasmer.token, onEvent: emit, signal });
-  emit({ stage: 'deploy', message: `Waiting for ${deployed.url} to answer` });
-  const live = await waitLive(deployed.url, deployed.versionId);
-  if (!live) emit({ stage: 'deploy', level: 'warn', message: 'The app is deployed but not answering yet; it may need another minute' });
+  const deployed = await deploySite({ siteDir, appName, owner, token: wasmer.token, emit, signal });
 
   const story = {
     id: job.id, title: bookTitle, summary: pi.final?.summary || '', metaphor: pi.final?.metaphor || '',
@@ -113,8 +126,10 @@ async function run(job, { user, title, filename, text, llm, images, wasmer, look
     minutes: Math.round((Date.now() - job.startedAt) / 6000) / 10,
     usage: { ...job.usage, tokens: job.usage.input + job.usage.output + job.usage.cacheRead + job.usage.cacheWrite, cost: Math.round(job.usage.cost * 10000) / 10000 },
   };
-  saveStory(user.account, story);
   archiveWork(workDir, archive);
+  saveVersion(job.id, workDir, { kind: 'build', by: user.username, message: 'First edition', url: deployed.url, usage: story.usage });
+  story.version = 1;
+  saveStory(user.account, story);
   rmSync(workDir, { recursive: true, force: true });
   return story;
 }
@@ -160,7 +175,7 @@ function readEvents(id) {
 }
 
 // A build with no final event and no heartbeat for STALE_MS died with its instance (redeploy, OOM, lifetime).
-function archiveState(id) {
+export function archiveState(id) {
   let events, meta = {};
   try { events = readEvents(id); } catch { return null; }
   try { meta = JSON.parse(readFileSync(join(buildsDir(), id, 'meta.json'), 'utf8')); } catch {}

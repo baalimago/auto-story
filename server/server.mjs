@@ -5,7 +5,8 @@ import { config } from './config.mjs';
 import { authenticate, identify, publicUser } from './auth.mjs';
 import { abortBuild, activeBuilds, archivedEvents, canFollow, getJob, startBuild } from './build.mjs';
 import { listStories } from './stories.mjs';
-import { PROVIDERS, parseProviders } from './providers.mjs';
+import { getBoard, startTweak, startRollback } from './edit.mjs';
+import { PROVIDERS, parseProviders, parseImagesOnly } from './providers.mjs';
 import { lookOptions, parseLook } from './looks.mjs';
 
 const MAX_BODY = 4 * 1024 * 1024;
@@ -97,6 +98,31 @@ const server = http.createServer(async (req, res) => {
       const look = parseLook(body.look);
       const job = startBuild({ user, title, filename: String(body.filename || '').slice(0, 200), text, llm, images, wasmerToken, look });
       return streamJob(res, job);
+    }
+
+    // The owner's edit view: the mood board, tweaks and rollbacks of one book on their shelf.
+    const board = path.match(/^\/api\/stories\/([0-9]{8}-[a-z0-9]{6})\/board$/);
+    if (board) {
+      const { user } = await authenticate(req);
+      return send(res, 200, getBoard(user, board[1]));
+    }
+
+    const tweak = path.match(/^\/api\/stories\/([0-9]{8}-[a-z0-9]{6})\/tweaks$/);
+    if (tweak && req.method === 'POST') {
+      const body = await readJson(req);
+      const { user, token: wasmerToken } = await authenticate(req, body);
+      if (!user.allowed) return send(res, 403, { error: `${user.username} is not on this app's allowlist` });
+      const needsModel = Boolean(String(body.message || '').trim() || body.brief || body.script || body.from);
+      const { llm, images } = needsModel ? parseProviders(body) : { llm: null, images: parseImagesOnly(body) };
+      return streamJob(res, startTweak({ user, wasmerToken, id: tweak[1], body, llm, images }));
+    }
+
+    const rollback = path.match(/^\/api\/stories\/([0-9]{8}-[a-z0-9]{6})\/rollback$/);
+    if (rollback && req.method === 'POST') {
+      const body = await readJson(req);
+      const { user, token: wasmerToken } = await authenticate(req, body);
+      if (!user.allowed) return send(res, 403, { error: `${user.username} is not on this app's allowlist` });
+      return streamJob(res, startRollback({ user, wasmerToken, id: rollback[1], version: body.version }));
     }
 
     const abort = path.match(/^\/api\/builds\/([0-9]{8}-[a-z0-9]{6})\/abort$/);

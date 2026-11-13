@@ -93,7 +93,9 @@ function baseInput(workDir, doc) {
   };
 }
 
-// ctx: { workDir, archive?, emit, signal?, llm, images?, look, usage, notes? }
+// ctx: { workDir, archive?, emit, signal?, llm, images?, look, usage, notes?, only? }
+// logDir, when set without archive, receives the agent logs only (tweaks snapshot versions instead).
+// only limits painting to some sheets and backdrops (see paintAll); set it after the build stage.
 // notes is the owner's free-text instruction for this run; archive, when set, receives logs and copies of the files.
 export function createContext(options) {
   const ctx = { emit: () => {}, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, images: 0, imageTokens: 0 }, ...options };
@@ -129,7 +131,7 @@ async function agent(ctx, { name, prompt, stage, role, input }) {
   writeFileSync(inputPath, `INPUT\n${JSON.stringify(input, null, 2)}\n`);
   const pi = await runPi({
     workDir: ctx.workDir, systemPath: join(config.agentDir, 'prompts', `${prompt}.md`), inputPath, stage, role,
-    logPath: join(ctx.archive || ctx.workDir, `pi-${n}-${name}.ndjson`), onEvent: ctx.emit, signal: ctx.signal, llm: ctx.llm, usage: ctx.usage,
+    logPath: join(ctx.logDir || ctx.archive || ctx.workDir, `pi-${n}-${name}.ndjson`), onEvent: ctx.emit, signal: ctx.signal, llm: ctx.llm, usage: ctx.usage,
   });
   archiveWork(ctx.workDir, ctx.archive);
   stop(ctx);
@@ -231,9 +233,9 @@ const stages = {
   async paint(ctx) {
     if (!ctx.images) return { painted: [], failed: [], sheets: [] };
     const report = readJson(join(ctx.workDir, 'check.json'));
-    const painted = await paintAll(ctx.siteDir, ctx.images, ctx.look, ctx.emit, { signal: ctx.signal, usage: ctx.usage, sides: report.sides || {} });
+    const painted = await paintAll(ctx.siteDir, ctx.images, ctx.look, ctx.emit, { signal: ctx.signal, usage: ctx.usage, sides: report.sides || {}, only: ctx.only });
     stop(ctx);
-    if (!painted.painted.length) ctx.emit({ stage: 'paint', level: 'warn', message: 'No backdrops were painted; the book will use its watercolor fallbacks' });
+    if (!painted.painted.length && !ctx.only) ctx.emit({ stage: 'paint', level: 'warn', message: 'No backdrops were painted; the book will use its watercolor fallbacks' });
     archiveWork(ctx.workDir, ctx.archive);
     return painted;
   },

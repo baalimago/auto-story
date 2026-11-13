@@ -7,6 +7,8 @@ export const PROVIDERS = {
   'openai-completions': { label: 'OpenAI-compatible Chat Completions', baseUrl: '', model: '' },
 };
 const OPENAI_BASE = 'https://api.openai.com/v1';
+// Paintings go here; tests point it at a fake.
+const IMAGES_BASE = process.env.OPENAI_IMAGES_BASE_URL || OPENAI_BASE;
 
 function bad(message) { return Object.assign(new Error(message), { status: 400 }); }
 
@@ -43,7 +45,14 @@ export function parseProviders(body = {}) {
 
   const imageKey = cleanKey(body.images?.apiKey);
   let images = null;
-  if (imageKey) images = { apiKey: imageKey, baseUrl: OPENAI_BASE, model: config.imageModel };
-  else if (llm.api === 'openai-responses' && llm.baseUrl === OPENAI_BASE) images = { apiKey: llm.apiKey, baseUrl: OPENAI_BASE, model: config.imageModel };
+  if (imageKey) images = { apiKey: imageKey, baseUrl: IMAGES_BASE, model: config.imageModel };
+  else if (llm.api === 'openai-responses' && llm.baseUrl === OPENAI_BASE) images = { apiKey: llm.apiKey, baseUrl: IMAGES_BASE, model: config.imageModel };
   return { llm, images };
+}
+
+// Repaint-only tweaks need no model, only an image key (the image key field, or an OpenAI model key).
+export function parseImagesOnly(body = {}) {
+  if (cleanKey(body.llm?.apiKey)) return parseProviders(body).images;
+  const imageKey = cleanKey(body.images?.apiKey);
+  return imageKey ? { apiKey: imageKey, baseUrl: IMAGES_BASE, model: config.imageModel } : null;
 }

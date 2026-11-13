@@ -158,6 +158,46 @@ this device" stores the settings in the browser's localStorage.
 This is deliberately trusting: the backend sees the keys, and so could a
 malicious document that talks Pi into printing its environment.
 
+## Editing a book (owner only)
+
+Each book on your shelf has an **Edit** link (`#edit/<id>`). It opens the
+book's **mood board**, built from the pipeline's own files:
+
+| Card | File | Editing it re-runs |
+|---|---|---|
+| Core concept: question, answer, concepts, misconceptions | `brief.json` | script → build |
+| Characters (with their model sheets) | `script.json` characters | build; the changed sheets and every scene they are in are repainted |
+| Plotline: title, story world, ideas, pages | `script.json` | build |
+| Scenes (with their backdrops) | `script.json` scenes | build; changed scenes are repainted |
+
+Below the board is a chat with the author. A message reaches the agents as
+`INPUT.owner_notes`, together with the earlier requests already applied.
+"Re-run from" can force an earlier start (re-read the document, or rewrite
+the script); by default the run starts at the earliest stage the edits touch.
+Ticking **Repaint** on a picture repaints it without running any agent.
+
+A tweak (`server/edit.mjs`) restores the live version into a fresh
+workspace, applies the edits, runs the stages, repaints only the pictures
+whose plan changed (`planChanges()`: style, character look, scene prompt,
+characters in it, or text side), and redeploys to the **same app**, so the
+URL never changes. One change runs at a time per book (`tweak.lock`).
+
+Every build, tweak and rollback is a version (`server/versions.mjs`):
+
+```
+/data/builds/<book id>/versions/<nnnn>/
+  version.json   kind, who, when, message, what changed, what was repainted
+  site/          exactly what was deployed
+  work/          brief.json, script.json, notes.md, check.json, reviews/
+```
+
+Rolling back redeploys an old version's site as a new version, so nothing
+is lost. Books made before mood boards existed can be rolled back but not
+tweaked. Endpoints: `GET /api/stories/<id>/board`,
+`POST /api/stories/<id>/tweaks`, `POST /api/stories/<id>/rollback`; all
+check that the book is on the caller's shelf, and tweak and rollback events
+stream like builds.
+
 ## Configuration
 
 | Name | Kind | Purpose |
@@ -180,6 +220,9 @@ scripts/dev.sh
 
 Open http://localhost:8080 and sign in with a Wasmer token. Builds and
 gallery entries go to `./data`.
+
+`node test/edit.mjs` runs a build, tweaks, a repaint and a rollback
+against a fake Pi, painter and registry.
 
 `node test/private_shelf.mjs` checks shelf isolation on plain Node
 against a fake registry.
