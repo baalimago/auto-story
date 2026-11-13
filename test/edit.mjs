@@ -107,6 +107,7 @@ const imageApi = createServer((req, res) => {
   req.setEncoding('latin1');
   req.on('data', c => { body += c; });
   req.on('end', () => {
+    if (req.method === 'GET') { res.setHeader('content-type', 'application/json'); return res.end('{"data":[]}'); }
     const prompt = req.url.includes('generations') ? JSON.parse(body).prompt : (body.match(/name="prompt"\r\n\r\n([\s\S]*?)\r\n--/) || [])[1] || '';
     painted.push(prompt.includes('Character model sheet') ? `sheet:${prompt.match(/model sheet for (\w+)/)[1]}` : `scene:${prompt.match(/Scene: ([^\n]*)/)[1].slice(0, 20)}`);
     res.setHeader('content-type', 'application/json');

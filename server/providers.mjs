@@ -43,10 +43,12 @@ export function parseProviders(body = {}) {
     throw bad('Paste an API key for the model');
   }
 
+  // With OpenAI's own API the model key paints too, as the form promises (it hides the paintings field).
+  // A separate key sent alongside is a leftover from an earlier setup, so it is ignored.
   const imageKey = cleanKey(body.images?.apiKey);
   let images = null;
-  if (imageKey) images = { apiKey: imageKey, baseUrl: IMAGES_BASE, model: config.imageModel };
-  else if (llm.api === 'openai-responses' && llm.baseUrl === OPENAI_BASE) images = { apiKey: llm.apiKey, baseUrl: IMAGES_BASE, model: config.imageModel };
+  if (llm.api === 'openai-responses' && llm.baseUrl === OPENAI_BASE) images = { apiKey: llm.apiKey, baseUrl: IMAGES_BASE, model: config.imageModel };
+  else if (imageKey) images = { apiKey: imageKey, baseUrl: IMAGES_BASE, model: config.imageModel };
   return { llm, images };
 }
 

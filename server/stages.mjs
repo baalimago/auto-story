@@ -279,7 +279,7 @@ const stages = {
     // A book with holes in it is not finished: give the missing pictures one more try, then stop
     // here instead of publishing broken pictures.
     let missing = await missingPictures(ctx.siteDir, 'painted');
-    const retryable = missing.length && Object.values(painted.errors || {}).some(m => !/safety|moderation|content policy|verif|billing|quota|api key|unauthori[sz]ed|forbidden/i.test(m));
+    const retryable = missing.length && !painted.keyRefused && Object.values(painted.errors || {}).some(m => !/safety|moderation|content policy|verif|billing|quota|api key|unauthori[sz]ed|forbidden/i.test(m));
     if (retryable) {
       const ids = missing.map(f => f.replace(/^art\//, '').replace(/\.webp$/, ''));
       ctx.emit({ stage: 'paint', level: 'warn', message: `Trying ${ids.join(', ')} once more` });
@@ -294,6 +294,7 @@ const stages = {
     }
     if (missing.length) {
       const reasons = [...new Set(Object.values(painted.errors || {}))].slice(0, 3);
+      if (painted.keyRefused) throw new Error(`Painting failed: the image API refused the key (${painted.keyRefused}). ${missing.length} picture${missing.length === 1 ? '' : 's'} are missing, so the book was not published`);
       throw new Error(`Painting failed for ${missing.length} picture${missing.length === 1 ? '' : 's'} the book shows (${missing.join(', ')})${reasons.length ? `. The image API said: ${reasons.join(' | ')}` : ''}`);
     }
     return painted;

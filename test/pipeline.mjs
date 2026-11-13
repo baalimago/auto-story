@@ -100,12 +100,13 @@ out({ type: 'agent_end' });
 `);
 
 const images = [];
-let refuseImages = false;
+let refuseImages = false, refuseKey = false;
 const server = createServer((req, res) => {
   req.resume();
   req.on('end', () => {
-    images.push(req.url);
     res.setHeader('content-type', 'application/json');
+    if (req.method === 'GET') { res.statusCode = refuseKey ? 401 : 200; return res.end(JSON.stringify(refuseKey ? { error: { message: 'Your API key has been invalidated.' } } : { data: [] })); }
+    images.push(req.url);
     if (refuseImages) { res.statusCode = 403; return res.end(JSON.stringify({ error: { message: 'Your organization must be verified to use this model' } })); }
     res.end(JSON.stringify({ data: [{ b64_json: Buffer.from('img').toString('base64') }] }));
   });
@@ -129,6 +130,9 @@ const firstImages = images.splice(0);
 // Every painting refused: the build must stop before deploying a book without pictures.
 refuseImages = true;
 const refused = await build();
+// A dead key is caught before any agent runs.
+refuseImages = false; refuseKey = true;
+const deadKey = await build();
 server.close();
 const lines = events.filter(e => !['tool', 'tool-result', 'usage'].includes(e.kind)).map(e => `${e.stage.padEnd(10)} ${e.role ? `[${e.role}] ` : ''}${String(e.message).slice(0, 140)}`);
 console.log(lines.join('\n'));
@@ -153,6 +157,8 @@ expect('transcript has input, system prompt, tool output, stderr and exit',
 expect('transcripts hold no API key', !transcripts.some(f => readFileSync(join(archive, 'transcripts', f), 'utf8').includes('sk-fake-1234567890')));
 expect('start message names the model note', events.some(e => e.kind === 'start' && /fake endpoint/.test(e.message)));
 expect('stray review draft removed', !existsSync(join(archive, 'reviews', 'draft.txt')) && events.some(e => /stray reviews\/draft.txt/.test(e.message)));
+const deadFail = deadKey.events.find(e => e.stage === 'failed');
+expect('a refused image key stops the build before any agent', /refused: Your API key has been invalidated/.test(deadFail?.message || '') && !deadKey.events.some(e => e.kind === 'start'), deadFail?.message);
 expect('brief, script and reviews archived', ['brief.json', 'script.json', 'reviews/brief-1.json', 'reviews/brief-2.json', 'reviews/script-1.json'].every(f => existsSync(join(archive, f))), readdirSync(archive).join(','));
 console.log(failures ? `${failures} FAILED` : 'all passed');
 process.exit(failures ? 1 : 0);

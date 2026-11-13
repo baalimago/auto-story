@@ -255,16 +255,22 @@ function applyPreset() {
   modelChanged();
 }
 
+// With OpenAI's own API the model key paints too, and the paintings field is hidden. Drop whatever
+// that hidden field still holds (a key remembered from earlier), or it would paint with a stale key.
+const reusesModelKey = m => m.api === 'openai-responses' && m.baseUrl.replace(/\/+$/, '') === 'https://api.openai.com/v1';
+
 function modelSettings() {
-  return {
+  const m = {
     api: $('llm-api').value, baseUrl: $('llm-base').value.trim(), model: $('llm-model').value.trim(),
     apiKey: $('llm-key').value.trim(), imageKey: $('img-key').value.trim(),
   };
+  if (reusesModelKey(m)) m.imageKey = '';
+  return m;
 }
 
 function modelChanged() {
   const m = modelSettings();
-  const reusesKey = m.api === 'openai-responses' && m.baseUrl.replace(/\/+$/, '') === 'https://api.openai.com/v1';
+  const reusesKey = reusesModelKey(m);
   $('img-row').hidden = reusesKey;
   const painted = (reusesKey && m.apiKey) || m.imageKey;
   $('art-note').textContent = painted

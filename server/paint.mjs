@@ -44,6 +44,16 @@ export function composePrompt(plan, image, look, { sides = [], refs = [] } = {})
   ].filter(Boolean).join('\n\n');
 }
 
+// Ask the image API whether it accepts the key before any model time is spent on the book.
+// Listing models is free; only a clear refusal (401/403) counts, anything else is left to the painter.
+export async function checkImageKey(images) {
+  let response;
+  try { response = await fetch(`${images.baseUrl}/models`, { headers: { authorization: `Bearer ${images.apiKey}` } }); } catch { return null; }
+  if (response.status !== 401 && response.status !== 403) return null;
+  const body = await response.json().catch(() => ({}));
+  return body.error?.message || `HTTP ${response.status}`;
+}
+
 async function request(path, init, images, usage) {
   const response = await fetch(`${images.baseUrl}${path}`, { method: 'POST', ...init, headers: { authorization: `Bearer ${images.apiKey}`, ...init.headers } });
   const body = await response.json().catch(() => ({}));
@@ -92,12 +102,15 @@ async function withRetries(fn) {
   throw lastError;
 }
 
-async function pool(items, fn, signal) {
+async function pool(items, fn, signal, halted = () => false) {
   const queue = [...items];
   await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
-    while (queue.length && !signal?.aborted) await fn(queue.shift());
+    while (queue.length && !signal?.aborted && !halted()) await fn(queue.shift());
   }));
 }
+
+// A refused key fails every picture the same way; stop at the first one and say so.
+const keyRefused = error => error.status === 401 || /api key|invalidated|incorrect key/i.test(error.message);
 
 // sides maps an image id to where the words sit on the pages that use it (from check.mjs).
 // only = { sheets: Set<character id>, images: Set<image id> } repaints just those (an owner's tweak);
@@ -109,6 +122,14 @@ export async function paintAll(siteDir, images, look, onEvent = () => {}, { sign
   const backdrops = only ? plan.images.filter(i => only.images.has(i.id)) : plan.images;
   // errors maps a picture id to why it could not be painted.
   const results = { painted: [], failed: [], sheets: [], errors: {} };
+  let refused = null;
+  const halted = () => Boolean(refused);
+  const refuse = error => {
+    if (refused || !keyRefused(error)) return;
+    refused = error.message;
+    results.keyRefused = error.message;
+    onEvent({ stage: 'paint', level: 'error', message: `The image API refused the key for paintings: ${error.message}` });
+  };
   const sheets = new Map();
   if (only) for (const c of allCharacters.filter(c => !only.sheets.has(c.id))) {
     const file = join(siteDir, 'art', `char-${c.id}.webp`);
@@ -132,12 +153,13 @@ export async function paintAll(siteDir, images, look, onEvent = () => {}, { sign
         results.sheets.push(id);
       } catch (error) {
         results.errors[id] = error.message;
+        refuse(error);
         onEvent({ stage: 'paint', level: 'warn', message: `Could not paint ${character.name}'s model sheet: ${error.message}. That character will be painted from its description only.` });
       }
-    }, signal);
+    }, signal, halted);
   }
 
-  if (backdrops.length) onEvent({ stage: 'paint', message: `Painting ${backdrops.length} backdrop${backdrops.length === 1 ? '' : 's'}${sheets.size ? ' from the model sheets' : ''}` });
+  if (backdrops.length && !refused) onEvent({ stage: 'paint', message: `Painting ${backdrops.length} backdrop${backdrops.length === 1 ? '' : 's'}${sheets.size ? ' from the model sheets' : ''}` });
   let editsBroken = false;
   await pool(backdrops, async image => {
     const started = Date.now();
@@ -159,9 +181,10 @@ export async function paintAll(siteDir, images, look, onEvent = () => {}, { sign
     } catch (error) {
       results.failed.push(image.id);
       results.errors[image.id] = error.message;
+      refuse(error);
       onEvent({ stage: 'paint', level: 'warn', message: `Could not paint ${image.id}: ${error.message}` });
     }
-  }, signal);
+  }, signal, halted);
   // The cast page links to every sheet; drop links to sheets that were never painted.
   for (const c of allCharacters) if (!existsSync(join(siteDir, 'art', `char-${c.id}.webp`))) results.failed.push(`char-${c.id}`);
   return results;
