@@ -183,7 +183,16 @@ book's **mood board**, built from the pipeline's own files:
 | Plotline: title, story world, ideas, pages | `script.json` | build |
 | Scenes (with their backdrops) | `script.json` scenes | build; changed scenes are repainted |
 
-Below the board is a chat with the author. A message reaches the agents as
+The cards start collapsed, each with a one-line summary; open one to edit its
+fields by hand.
+
+Beside the board is **the editor**, a chat with an expert agent
+(`agent/prompts/editor.md`, `server/editor_agent.mjs`, `POST /api/stories/<id>/chat`).
+It calls your own model directly and edits the board through tools (`edit`,
+`set_rebuild_notes`, `mark_repaint`); each change streams back and appears in
+its card as it happens. It never touches evidence quotes, facts, coverage or
+ids. Nothing is rebuilt until you press **Rebuild the book**, which sends the
+edited files as a tweak. Notes for the rebuild reach the agents as
 `INPUT.owner_notes`, together with the earlier requests already applied.
 "Re-run from" can force an earlier start (re-read the document, or rewrite
 the script); by default the run starts at the earliest stage the edits touch.

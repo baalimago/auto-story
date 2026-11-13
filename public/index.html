@@ -98,7 +98,7 @@
       </div>
     </section>
 
-    <section id="editor" class="card editor" hidden>
+    <section id="editor" class="editor" hidden>
       <div class="editor-head">
         <a id="editor-back" class="ghost back" href="#">← Shelf</a>
         <div class="editor-title">
@@ -108,31 +108,54 @@
         <a id="editor-open" class="ghost" href="#" target="_blank" rel="noopener">Open the book ↗</a>
       </div>
       <p id="editor-reason" class="editor-reason" hidden></p>
-      <p class="lede small">This is the book's <strong>mood board</strong>: the concepts it teaches, its characters, its plot and its pictures.
-        Change anything, say what you want in the chat, and the book is rebuilt from the earliest thing you changed and redeployed to the same address.</p>
 
-      <div id="board" class="board"></div>
-
-      <div class="chat">
-        <h3>Chat with the author</h3>
-        <ol id="history" class="history"></ol>
-        <div class="composer">
-          <textarea id="tweak-message" rows="3" maxlength="4000" placeholder="What should change? For example: make Tod braver, explain elections with a race instead, use shorter sentences on page 4…"></textarea>
-          <div class="composer-row">
-            <label>Re-run from
-              <select id="tweak-from">
-                <option value="">Earliest thing I changed (default)</option>
-                <option value="build">The book only (fast)</option>
-                <option value="script">The script (rewrites the story)</option>
-                <option value="understand">The concepts (re-reads the document)</option>
-              </select>
-            </label>
-            <span id="dirty-note" class="muted"></span>
-            <button id="tweak-go" class="primary" type="button" disabled>Apply changes</button>
-          </div>
-          <span id="tweak-status" class="status" role="status"></span>
+      <div class="editor-grid">
+        <div class="board-col">
+          <div id="board" class="board"></div>
+          <details class="versions">
+            <summary>Versions</summary>
+            <ol id="history" class="history"></ol>
+          </details>
         </div>
-        <div id="editor-model-slot"></div>
+
+        <aside class="chat card">
+          <h3>Your editor</h3>
+          <p class="muted chat-intro">Tell the editor what to change. It edits the board as you watch; nothing is rebuilt until you press Rebuild.</p>
+          <ol id="chat-log" class="chat-log" aria-live="polite"></ol>
+          <form id="chat-form" class="chat-form">
+            <textarea id="chat-input" rows="2" maxlength="4000" placeholder="Ask for any change…"></textarea>
+            <button id="chat-send" class="primary small" type="submit">Send</button>
+          </form>
+          <p id="chat-status" class="status" role="status"></p>
+
+          <div id="pending" class="pending" hidden>
+            <p id="dirty-note"></p>
+            <div class="pending-actions">
+              <button id="tweak-go" class="primary" type="button">Rebuild the book</button>
+              <button id="discard" class="ghost small" type="button">Discard changes</button>
+            </div>
+            <details class="rebuild-opts">
+              <summary>Rebuild options</summary>
+              <label>Notes for the rebuild
+                <textarea id="tweak-message" rows="2" maxlength="4000" placeholder="Anything that is not on the board, e.g. warmer colours"></textarea>
+              </label>
+              <label>Re-run from
+                <select id="tweak-from">
+                  <option value="">Earliest thing that changed (default)</option>
+                  <option value="build">The book only (fast)</option>
+                  <option value="script">The script (rewrites the story)</option>
+                  <option value="understand">The concepts (re-reads the document)</option>
+                </select>
+              </label>
+            </details>
+            <span id="tweak-status" class="status" role="status"></span>
+          </div>
+
+          <details id="model-details" class="model-details">
+            <summary>Model settings</summary>
+            <div id="editor-model-slot"></div>
+          </details>
+        </aside>
       </div>
     </section>
 

@@ -210,6 +210,37 @@ await done(repaint);
 expect('repaint-only runs no agent and paints just that picture', repaint.status === 'done' && painted.join(',') === 'scene:Inside the lodge, Be', `${repaint.error} ${painted}`);
 expect('a model-less request with nothing to repaint is refused', (await call(`/api/stories/${job.id}/tweaks`, alice, {})).status === 400);
 
+// 5b. Chat with the editor agent (a fake Chat Completions model): its edits stream back and protected fields stay put.
+const seen = [];
+const model = createServer((req, res) => {
+  let raw = ''; req.on('data', c => raw += c); req.on('end', () => {
+    const body = JSON.parse(raw); seen.push(body);
+    const last = body.messages.at(-1);
+    const message = last.role === 'tool' ? { role: 'assistant', content: 'Tod now wears a green scarf, and I marked his sheet for repainting.' }
+      : { role: 'assistant', content: null, tool_calls: [
+          { id: 'c1', type: 'function', function: { name: 'edit', arguments: JSON.stringify({ changes: [
+            { file: 'script', path: 'characters.1.look', value: 'A thin young beaver with sandy fur, a green scarf and a satchel.' },
+            { file: 'brief', path: 'concepts.0.evidence', value: [] },
+            { file: 'script', path: 'pages.8', value: { scene: 'lodge', side: 'left', idea: 'copy', text: 'The end.' } }] }) } },
+          { id: 'c2', type: 'function', function: { name: 'mark_repaint', arguments: JSON.stringify({ ids: ['char-tod'] }) } }] };
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message }], usage: {} }));
+  });
+});
+await new Promise(ok => model.listen(0, ok));
+const chatLlm = { api: 'openai-completions', baseUrl: `http://127.0.0.1:${model.address().port}/v1`, model: 'fake', apiKey: 'sk-fake-1234567890' };
+r = await call(`/api/stories/${job.id}/chat`, alice, { messages: [{ role: 'user', text: 'Give Tod a green scarf' }], llm: chatLlm });
+const edits = (r.events || []).filter(e => e.type === 'edit');
+expect('chat streams the edits it makes', edits.length === 2 && edits[0].path === 'characters.1.look' && edits[1].path === 'pages.8', JSON.stringify(r.events || r.json));
+expect('chat cannot touch evidence', !edits.some(e => e.file === 'brief') && seen[1].messages.at(-2).content.includes('protected'), JSON.stringify(seen[1]?.messages.slice(-2)));
+expect('chat marks pictures and replies', r.events.some(e => e.type === 'repaint' && e.ids.includes('char-tod')) && r.events.some(e => e.type === 'text' && /green scarf/.test(e.text)));
+expect('chat returns the edited files', r.end.type === 'done' && r.end.script.characters[1].look.includes('green') && r.end.script.pages.length === 9 && r.end.brief.concepts[0].evidence.length === 1);
+expect('chat sees the board in the system prompt', seen[0].messages[0].role === 'system' && seen[0].messages[0].content.includes('The Busy Beavers'));
+expect('bob cannot chat about alice\'s book', (await call(`/api/stories/${job.id}/chat`, bob, { messages: [{ role: 'user', text: 'hi' }], llm: chatLlm })).status === 404);
+const before = (await call(`/api/stories/${job.id}/board`, alice)).json;
+expect('chatting changes nothing until a rebuild', !before.script.characters[1].look.includes('green') && before.script.pages.length === 8, before.script.characters[1].look);
+model.close();
+
 // 6. Roll back to version 1.
 r = await call(`/api/stories/${job.id}/rollback`, alice, { version: 1 });
 expect('rollback finishes', r.end.stage === 'done', JSON.stringify(r.end));
@@ -219,6 +250,7 @@ expect('versions so far: build, 2 tweaks, repaint, rollback', board.versions.len
 expect('rollback is a new version with the old script', last.kind === 'rollback' && last.to === 1 && board.script.title === 'The Busy Beavers' && board.story.title === 'The Busy Beavers', JSON.stringify(last));
 expect('nothing to change is refused', (await call(`/api/stories/${job.id}/tweaks`, alice, { llm })).status === 400);
 
+if (process.env.KEEP) { console.log(`KEEP ${alice} ${job.id}`); await new Promise(() => {}); }
 imageApi.close(); registry.close();
 console.log(failures ? `${failures} FAILED` : 'all passed');
 process.exit(failures ? 1 : 0);

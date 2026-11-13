@@ -599,10 +599,16 @@ loadMe().catch(error => {
 const resume = storage(s => s.getItem('auto-story-build'));
 if (resume) { resetProgress(); follow(resume); }
 
-// ── The owner's edit view: mood board, chat and versions of one book ─────────────────────────────
-// #edit/<id> opens it. Every field is bound to a path in brief.json or script.json; "Apply changes"
-// sends the edited files, the message and the pictures to repaint, and the server re-runs the book
-// from the earliest stage those touch, then redeploys the same app.
+
+// ── The owner's edit view: a calm mood board, a chat with the editor agent, versions ─────────────
+// #edit/<id> opens it. The board shows a draft of brief.json and script.json: the owner's own edits
+// and the editor agent's edits both change the draft, and each change shows up in its card as it
+// happens. "Rebuild the book" sends the draft as a tweak; the server rebuilds from the earliest
+// stage it touches and redeploys the same app.
+const ed = { draft: null, open: new Set(), chat: [], notes: '', repaint: new Set(), chatting: false };
+const clone = value => JSON.parse(JSON.stringify(value ?? null));
+const chatKey = id => `auto-story-chat-${id}`;
+
 function route() {
   const id = location.hash.match(/^#edit\/([0-9]{8}-[a-z0-9]{6})$/)?.[1];
   if (id && state.wasmer?.user) openEditor(id);
@@ -611,7 +617,12 @@ function route() {
 window.addEventListener('hashchange', route);
 
 function openEditor(id) {
+  if (state.editing !== id) {
+    ed.chat = storage(s => JSON.parse(s.getItem(chatKey(id)) || '[]')) || [];
+    ed.open = new Set();
+  }
   state.editing = id;
+  document.body.classList.add('editing');
   for (const s of ['hero', 'builder', 'shelf']) $(s).hidden = true;
   $('editor').hidden = false;
   $('editor-model-slot').appendChild($('model'));
@@ -622,6 +633,7 @@ function closeEditor() {
   if (!state.editing && $('editor').hidden) return;
   state.editing = null;
   state.board = null;
+  document.body.classList.remove('editing');
   for (const s of ['hero', 'builder', 'shelf']) $(s).hidden = false;
   $('editor').hidden = true;
   $('builder').insertBefore($('model'), $('builder').querySelector('.actions'));
@@ -634,7 +646,8 @@ async function loadBoard(id) {
     const board = await api(`/api/stories/${id}/board`);
     if (state.editing !== id) return;
     state.board = board;
-    renderBoard();
+    resetDraft();
+    renderAll();
     if (board.running && board.running !== state.buildId) { resetProgress(); follow(board.running); }
   } catch (error) {
     $('board').innerHTML = `<p class="empty">Could not open this book: ${escape(error.message)}</p>`;
@@ -642,18 +655,57 @@ async function loadBoard(id) {
   }
 }
 
-const getPath = (obj, path) => path.split('.').reduce((o, k) => o?.[k], obj);
-function setPath(obj, path, value) {
-  const keys = path.split('.');
-  const last = keys.pop();
-  const target = keys.reduce((o, k) => o[k], obj);
-  target[last] = value;
+function resetDraft() {
+  ed.draft = { brief: clone(state.board.brief), script: clone(state.board.script) };
+  ed.notes = '';
+  ed.repaint = new Set();
+  $('tweak-message').value = '';
+  $('tweak-from').value = '';
 }
 
-function field(doc, path, label, { rows = 2, input = false, hint = '' } = {}) {
-  const value = getPath(state.board[doc], path) ?? '';
-  const attrs = `data-doc="${doc}" data-path="${escape(path)}" ${state.board.editable ? '' : 'disabled'}`;
-  const control = input ? `<input ${attrs} value="${escape(value)}">` : `<textarea ${attrs} rows="${rows}">${escape(value)}</textarea>`;
+const getPath = (obj, path) => path.split('.').reduce((o, k) => o?.[k], obj);
+function setPath(obj, path, value, remove = false) {
+  const keys = path.split('.');
+  const last = keys.pop();
+  const target = keys.reduce((o, k) => o?.[k], obj);
+  if (!target) return;
+  if (remove) { if (Array.isArray(target)) target.splice(Number(last), 1); else delete target[last]; }
+  else target[last] = value;
+}
+
+// How many leaf values differ between two JSON values.
+function diffCount(a, b) {
+  if (a === b) return 0;
+  if (a && b && typeof a === 'object' && typeof b === 'object') {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    let n = 0;
+    for (const k of keys) n += diffCount(a[k], b[k]);
+    return n;
+  }
+  return JSON.stringify(a) === JSON.stringify(b) ? 0 : 1;
+}
+
+function changes() {
+  const b = state.board;
+  const brief = diffCount(b.brief, ed.draft.brief), script = diffCount(b.script, ed.draft.script);
+  return { brief, script, total: brief + script };
+}
+
+// The card and item a path belongs to, so an edit can open them.
+function keysFor(file, path) {
+  const [head, index] = path.split('.');
+  if (file === 'brief') return head === 'concepts' && index !== undefined ? ['concept', `concepts.${index}`] : head === 'misconceptions' ? ['concept', 'misconceptions'] : ['concept'];
+  if (['characters', 'pages', 'scenes'].includes(head)) return index !== undefined ? [head, `${head}.${index}`] : [head];
+  if (head === 'ideas') return index !== undefined ? ['story', `ideas.${index}`] : ['story'];
+  return ['story'];
+}
+
+function field(doc, path, label, { input = false, hint = '' } = {}) {
+  const value = getPath(ed.draft[doc], path) ?? '';
+  const original = getPath(state.board[doc], path) ?? '';
+  const dirty = String(value) !== String(original) ? ' dirty' : '';
+  const attrs = `data-doc="${doc}" data-path="${escape(path)}" class="${dirty.trim()}" ${state.board.editable ? '' : 'disabled'}`;
+  const control = input ? `<input ${attrs} value="${escape(value)}">` : `<textarea ${attrs} rows="2">${escape(value)}</textarea>`;
   return `<label class="f"><span>${escape(label)}${hint ? ` <small>${escape(hint)}</small>` : ''}</span>${control}</label>`;
 }
 
@@ -662,77 +714,92 @@ function artUrl(file) {
   if (!b.art.includes(file)) return null;
   return `${b.story.url.replace(/\/$/, '')}/art/${file}?v=${b.version}`;
 }
-function picture(id, alt) {
-  const b = state.board;
-  const ext = b.story.artMode === 'svg' ? 'svg' : 'webp';
-  const url = artUrl(`${id}.${ext}`);
-  const repaint = ext === 'webp' && b.canRollback ? `<label class="repaint"><input type="checkbox" data-repaint="${escape(id)}"> Repaint</label>` : '';
-  return `<figure class="pic">${url ? `<img src="${escape(url)}" alt="${escape(alt)}" loading="lazy">` : '<div class="nopic">no picture yet</div>'}${repaint}</figure>`;
+function art(id) {
+  const ext = state.board.story.artMode === 'svg' ? 'svg' : 'webp';
+  return artUrl(`${id}.${ext}`);
+}
+function thumb(id, alt, cls = '') {
+  const url = art(id);
+  return url ? `<img class="${cls}" src="${escape(url)}" alt="${escape(alt)}" loading="lazy">` : `<span class="${cls} nopic" aria-hidden="true"></span>`;
+}
+function repaintBox(id) {
+  if (state.board.story.artMode === 'svg' || !state.board.canRollback) return '';
+  return `<label class="repaint"><input type="checkbox" data-repaint="${escape(id)}" ${ed.repaint.has(id) ? 'checked' : ''}> Repaint this picture</label>`;
+}
+
+const isOpen = key => ed.open.has(key) ? ' open' : '';
+const clip = (text, n = 140) => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
+const changedIn = (doc, prefix) => diffCount(getPath(state.board[doc], prefix), getPath(ed.draft[doc], prefix)) > 0;
+const mark = (doc, prefix) => changedIn(doc, prefix) ? '<span class="changed" title="Changed, not yet rebuilt">●</span>' : '';
+
+function card(key, title, summary, body, changed = '') {
+  return `<details class="board-card ${key}" data-key="${key}"${isOpen(key)}>
+    <summary><span class="card-title">${title} ${changed}</span><span class="card-summary">${summary}</span></summary>
+    <div class="card-body">${body}</div></details>`;
+}
+function item(key, summary, body, changed = '') {
+  return `<details class="item" data-key="${key}"${isOpen(key)}><summary>${summary} ${changed}</summary><div class="item-body">${body}</div></details>`;
 }
 
 function renderBoard() {
-  const b = state.board;
-  const s = b.story;
+  const b = state.board, { brief, script } = ed.draft;
+  const cards = [];
+  if (brief) {
+    const concepts = brief.concepts || [];
+    cards.push(card('concept', 'Core concept',
+      `<span class="lead">${escape(clip(brief.question, 160))}</span><span class="chips">${concepts.map(c => `<span class="chip">${escape(c.name)}</span>`).join('')}</span>`,
+      `${field('brief', 'question', 'The question')}${field('brief', 'answer', 'The answer')}
+       ${concepts.map((c, i) => item(`concepts.${i}`, `<strong>${escape(c.name)}</strong> <span class="muted">${escape(clip(c.plain, 90))}</span>`,
+         `${field('brief', `concepts.${i}.name`, 'Name', { input: true })}${field('brief', `concepts.${i}.plain`, 'For a 10-12 year old')}${field('brief', `concepts.${i}.precise`, 'For grown-ups')}`,
+         mark('brief', `concepts.${i}`))).join('')}
+       ${(brief.misconceptions || []).length ? item('misconceptions', `<strong>Misconceptions to avoid</strong> <span class="muted">${brief.misconceptions.length}</span>`,
+         brief.misconceptions.map((m, i) => `${field('brief', `misconceptions.${i}.wrong`, 'Wrong')}${field('brief', `misconceptions.${i}.right`, 'Right')}`).join(''), mark('brief', 'misconceptions')) : ''}`,
+      mark('brief', '')));
+  }
+  if (script) {
+    const chars = script.characters || [];
+    cards.push(card('characters', 'Characters',
+      `<span class="faces">${chars.map(c => `<span class="face">${thumb(`char-${c.id}`, c.name, 'avatar')}<span>${escape(c.name)}</span></span>`).join('')}</span>`,
+      chars.map((c, i) => item(`characters.${i}`, `${thumb(`char-${c.id}`, c.name, 'avatar small')}<strong>${escape(c.name)}</strong> <span class="muted">${escape(clip(c.is, 70))}</span>`,
+        `<div class="with-pic">${thumb(`char-${c.id}`, c.name, 'sheet')}<div>${field('script', `characters.${i}.name`, 'Name', { input: true })}
+         ${field('script', `characters.${i}.is`, 'Stands for', { input: true })}${field('script', `characters.${i}.personality`, 'Personality', { input: true })}
+         ${field('script', `characters.${i}.look`, 'Look', { hint: 'changing it repaints this character' })}${repaintBox(`char-${c.id}`)}</div></div>`,
+        mark('script', `characters.${i}`))).join(''),
+      mark('script', 'characters')));
+    cards.push(card('story', 'Story',
+      `<span class="lead">${escape(script.title || '')}</span><span class="muted">${escape(clip(script.subtitle || script.metaphor?.world, 140))}</span>`,
+      `${field('script', 'title', 'Title', { input: true })}${field('script', 'subtitle', 'Subtitle', { input: true })}${field('script', 'metaphor.world', 'The story world')}
+       <h4>Ideas, in teaching order</h4>
+       ${(script.ideas || []).map((idea, i) => item(`ideas.${i}`, `<strong>${i + 1}. ${escape(idea.title)}</strong>`,
+         `${field('script', `ideas.${i}.title`, 'Title', { input: true })}${field('script', `ideas.${i}.text`, 'What it says')}`, mark('script', `ideas.${i}`))).join('')}`,
+      ['title', 'subtitle', 'metaphor', 'ideas'].some(k => changedIn('script', k)) ? '<span class="changed">●</span>' : ''));
+    const pages = script.pages || [];
+    cards.push(card('pages', 'Pages', `<span class="muted">${pages.length} pages · ${pages.filter(p => p.interaction).length} interactive</span>`,
+      pages.map((p, i) => item(`pages.${i}`, `<span class="pno">${i === 0 ? 'Cover' : i}</span><span class="muted">${escape(clip(p.text, 110))}</span>`,
+        `${field('script', `pages.${i}.text`, i === 0 ? 'Cover text' : `Text · ${p.idea || ''} · scene ${p.scene}`)}
+         ${i ? `${field('script', `pages.${i}.teaches`, 'What it teaches')}${p.interaction ? field('script', `pages.${i}.interaction.plan`, `Interaction (${p.interaction.type})`) : ''}${field('script', `pages.${i}.note`, 'Note for grown-ups')}` : ''}`,
+        mark('script', `pages.${i}`))).join(''),
+      mark('script', 'pages')));
+    const scenes = script.scenes || [];
+    cards.push(card('scenes', 'Scenes', `<span class="thumbs">${scenes.map(sc => thumb(sc.id, sc.shows, 'mini')).join('')}</span>`,
+      scenes.map((sc, i) => item(`scenes.${i}`, `${thumb(sc.id, sc.shows, 'mini')}<strong>${escape(sc.id)}</strong> <span class="muted">${escape(clip(sc.shows, 80))}</span>`,
+        `<div class="with-pic wide">${thumb(sc.id, sc.shows, 'backdrop')}<div>${field('script', `scenes.${i}.shows`, 'What the picture shows', { hint: 'changing it repaints this scene' })}${repaintBox(sc.id)}</div></div>`,
+        mark('script', `scenes.${i}`))).join(''),
+      mark('script', 'scenes')));
+  } else if (b.art.length) {
+    cards.push(card('pictures', 'Pictures', `<span class="thumbs">${b.art.slice(0, 8).map(f => `<img class="mini" src="${escape(artUrl(f))}" alt="" loading="lazy">`).join('')}</span>`,
+      `<div class="pics">${b.art.map(f => `<img src="${escape(artUrl(f))}" alt="${escape(f)}" loading="lazy">`).join('')}</div>`));
+  }
+  $('board').innerHTML = cards.join('') || '<p class="empty">Nothing to show for this book.</p>';
+}
+
+function renderHead() {
+  const b = state.board, s = b.story;
   $('editor-title').textContent = s.title;
-  $('editor-sub').textContent = [`version ${b.version || 1}`, s.look, s.model, `${s.pages} pages`].filter(Boolean).join(' · ');
+  $('editor-sub').textContent = [`version ${b.version || 1}`, s.look, `${s.pages} pages`].filter(Boolean).join(' · ');
   $('editor-open').href = s.url;
   $('editor-reason').hidden = !b.reason;
   $('editor-reason').textContent = b.reason || '';
-  const brief = b.brief, script = b.script;
-  const cards = [];
-  if (brief) {
-    cards.push(`<article class="board-card concept"><h3>Core concept</h3>
-      ${field('brief', 'question', 'The question the book answers')}
-      ${field('brief', 'answer', 'The answer', { rows: 3 })}
-      ${(brief.concepts || []).map((c, i) => `<div class="item">
-        ${field('brief', `concepts.${i}.name`, `Concept ${i + 1}`, { input: true })}
-        ${field('brief', `concepts.${i}.plain`, 'For a 10-12 year old', { rows: 3 })}
-        <details><summary>Precise explanation</summary>${field('brief', `concepts.${i}.precise`, 'For grown-ups', { rows: 4 })}</details>
-      </div>`).join('')}
-      ${(brief.misconceptions || []).length ? `<details class="item"><summary>Misconceptions to avoid (${brief.misconceptions.length})</summary>
-        ${brief.misconceptions.map((m, i) => `${field('brief', `misconceptions.${i}.wrong`, 'Wrong')}${field('brief', `misconceptions.${i}.right`, 'Right')}`).join('')}</details>` : ''}
-    </article>`);
-  }
-  if (script) {
-    cards.push(`<article class="board-card characters"><h3>Characters</h3>
-      ${(script.characters || []).map((c, i) => `<div class="item with-pic">
-        ${picture(`char-${c.id}`, c.name)}
-        <div>${field('script', `characters.${i}.name`, 'Name', { input: true })}
-        ${field('script', `characters.${i}.is`, 'Stands for', { input: true })}
-        ${field('script', `characters.${i}.personality`, 'Personality', { input: true })}
-        ${field('script', `characters.${i}.look`, 'Look', { rows: 4, hint: 'changing it repaints this character' })}</div>
-      </div>`).join('')}
-    </article>`);
-    cards.push(`<article class="board-card plot"><h3>Plotline</h3>
-      ${field('script', 'title', 'Title', { input: true })}
-      ${field('script', 'subtitle', 'Subtitle', { input: true })}
-      ${field('script', 'metaphor.world', 'The story world', { rows: 3 })}
-      <h4>Ideas, in teaching order</h4>
-      ${(script.ideas || []).map((idea, i) => `<div class="item">${field('script', `ideas.${i}.title`, `Idea ${i + 1}`, { input: true })}${field('script', `ideas.${i}.text`, 'What it says')}</div>`).join('')}
-      <h4>Pages</h4>
-      ${(script.pages || []).map((p, i) => `<div class="item page">
-        ${field('script', `pages.${i}.text`, i === 0 ? 'Cover' : `Page ${i} · ${p.idea || ''} · ${p.scene}${p.interaction?.type ? ` · ${p.interaction.type}` : ''}`, { rows: 3 })}
-        ${i ? `<details><summary>What it teaches, interaction and note</summary>
-          ${field('script', `pages.${i}.teaches`, 'Teaches')}
-          ${p.interaction ? field('script', `pages.${i}.interaction.plan`, `Interaction (${p.interaction.type})`, { rows: 3 }) : ''}
-          ${field('script', `pages.${i}.note`, 'Note for grown-ups', { rows: 3 })}</details>` : ''}
-      </div>`).join('')}
-    </article>`);
-    cards.push(`<article class="board-card scenes"><h3>Scenes</h3>
-      ${(script.scenes || []).map((sc, i) => `<div class="item with-pic">
-        ${picture(sc.id, sc.shows)}
-        <div><strong>${escape(sc.id)}</strong> <span class="muted">${escape((sc.characters || []).join(', '))}</span>
-        ${field('script', `scenes.${i}.shows`, 'What the picture shows', { rows: 4 })}</div>
-      </div>`).join('')}
-    </article>`);
-  } else if (b.art.length) {
-    cards.push(`<article class="board-card scenes"><h3>Pictures</h3><div class="pics">${b.art.map(f => `<img src="${escape(artUrl(f))}" alt="${escape(f)}" loading="lazy">`).join('')}</div></article>`);
-  }
-  $('board').innerHTML = cards.join('') || '<p class="empty">Nothing to show for this book.</p>';
-  renderHistory();
-  $('tweak-message').disabled = !b.editable;
-  $('tweak-from').disabled = !b.editable;
-  updateTweak();
 }
 
 function renderHistory() {
@@ -740,69 +807,195 @@ function renderHistory() {
   $('history').innerHTML = [...b.versions].reverse().map(v => {
     const what = v.kind === 'build' ? 'First edition'
       : v.kind === 'rollback' ? `Rolled back to version ${v.to}`
-      : [v.changed?.includes('brief') && 'edited the concepts', v.changed?.includes('script') && 'edited the script',
-         v.repainted?.length && `repainted ${v.repainted.length} picture${v.repainted.length === 1 ? '' : 's'}`].filter(Boolean).join(', ');
+      : [v.message && `“${clip(v.message, 80)}”`, v.changed?.includes('brief') && 'concepts edited', v.changed?.includes('script') && 'story edited',
+         v.repainted?.length && `${v.repainted.length} picture${v.repainted.length === 1 ? '' : 's'} repainted`].filter(Boolean).join(' · ');
     const live = v.n === b.version;
-    return `<li class="${live ? 'live' : ''}">
-      ${v.kind === 'tweak' && v.message ? `<p class="bubble">${escape(v.message)}</p>` : ''}
-      <div class="ver"><strong>Version ${v.n}</strong> · ${escape(what || 'rebuilt the book')} · ${escape(v.by || '')} · ${escape(new Date(v.at).toLocaleString())}
-        ${live ? '<span class="pill">live</span>' : b.canRollback ? `<button class="ghost small" data-rollback="${v.n}" type="button">Roll back to this</button>` : ''}
-        ${v.kind !== 'rollback' ? `<button class="ghost small" data-transcripts="${escape(v.job || b.story.id)}" type="button">Agent transcripts</button>` : ''}</div>
-    </li>`;
+    return `<li class="${live ? 'live' : ''}"><strong>Version ${v.n}</strong> <span class="muted">${escape(new Date(v.at).toLocaleString())}</span><br>${escape(what || 'Rebuilt')}
+      ${live ? ' <span class="pill">live</span>' : b.canRollback ? ` <button class="ghost small" data-rollback="${v.n}" type="button">Roll back to this</button>` : ''}
+      ${v.kind !== 'rollback' ? ` <button class="ghost small" data-transcripts="${escape(v.job || b.story.id)}" type="button">Agent transcripts</button>` : ''}</li>`;
   }).join('') || '<li class="muted">No versions yet.</li>';
-  $('history').scrollTop = $('history').scrollHeight;
 }
 
-// What the owner changed on the board.
-function boardEdits() {
-  const b = state.board;
-  const docs = { brief: structuredClone(b.brief), script: structuredClone(b.script) };
-  let count = 0;
-  for (const el of $('board').querySelectorAll('[data-path]')) {
-    const original = getPath(b[el.dataset.doc], el.dataset.path) ?? '';
-    const changed = el.value !== String(original);
-    el.classList.toggle('dirty', changed);
-    if (changed) { count++; setPath(docs[el.dataset.doc], el.dataset.path, el.value); }
-  }
-  const touched = doc => [...$('board').querySelectorAll(`[data-doc="${doc}"].dirty`)].length > 0;
-  const repaint = [...$('board').querySelectorAll('[data-repaint]:checked')].map(el => el.dataset.repaint);
-  return { count, brief: touched('brief') ? docs.brief : null, script: touched('script') ? docs.script : null, repaint };
+function renderChat() {
+  const log = $('chat-log');
+  log.innerHTML = ed.chat.map(m => `<li class="msg ${m.role}">${m.role === 'assistant' ? '<span class="who">Editor</span>' : ''}<p>${escape(m.text)}</p>${
+    m.edits?.length ? `<ul class="edits">${m.edits.map(e => `<li>✎ ${escape(describeEdit(e))}</li>`).join('')}</ul>` : ''}</li>`).join('')
+    || `<li class="msg hint"><p>Try: “Make the story funnier”, “Give ${escape(ed.draft?.script?.characters?.[0]?.name || 'the hero')} a red scarf”, “Explain the second concept more simply”, or “Cut page 3”.</p></li>`;
+  log.scrollTop = log.scrollHeight;
+}
+
+function describeEdit(e) {
+  const d = ed.draft, [head, index, ...rest] = e.path.split('.');
+  const doc = d[e.file];
+  const name = head === 'characters' ? doc.characters?.[index]?.name : head === 'scenes' ? `scene ${doc.scenes?.[index]?.id}` : head === 'pages' ? (index === '0' ? 'the cover' : `page ${index}`)
+    : head === 'concepts' ? doc.concepts?.[index]?.name : head === 'ideas' ? `idea ${Number(index) + 1}` : null;
+  const what = rest.length ? rest.join(' ') : head;
+  return e.op === 'remove' ? `removed ${name || e.path}` : `${name ? `${name}: ` : ''}${what === head && name ? head.replace(/s$/, '') : what}`;
+}
+
+function renderPending() {
+  const c = changes();
+  const repaint = ed.repaint.size, notes = $('tweak-message').value.trim();
+  const any = c.total || repaint || notes || $('tweak-from').value;
+  $('pending').hidden = !any || !state.board.canRollback;
+  $('dirty-note').textContent = [c.total && `${c.total} change${c.total === 1 ? '' : 's'} on the board`, repaint && `${repaint} picture${repaint === 1 ? '' : 's'} to repaint`, notes && 'notes for the rebuild']
+    .filter(Boolean).join(' · ') + (any ? ', not yet in the book.' : '');
+  updateTweak();
+}
+
+function renderAll() {
+  renderHead();
+  renderBoard();
+  renderHistory();
+  renderChat();
+  renderPending();
+  const editable = state.board.editable;
+  $('chat-input').disabled = !editable;
+  $('chat-form').hidden = !editable;
 }
 
 function updateTweak() {
-  if (!state.board) return;
-  const edits = boardEdits();
-  const message = $('tweak-message').value.trim();
-  $('dirty-note').textContent = [edits.count && `${edits.count} edit${edits.count === 1 ? '' : 's'} on the board`,
-    edits.repaint.length && `${edits.repaint.length} picture${edits.repaint.length === 1 ? '' : 's'} to repaint`].filter(Boolean).join(' · ');
+  if (!state.board || !ed.draft) return;
+  const c = changes();
   const m = modelSettings();
-  const needsModel = Boolean(message || edits.brief || edits.script || $('tweak-from').value);
+  const notes = $('tweak-message').value.trim();
+  const needsModel = Boolean(c.total || notes || $('tweak-from').value);
   const hasModel = m.apiKey && m.model && (m.baseUrl || m.api !== 'openai-completions');
   const hasImages = m.imageKey || (m.api === 'openai-responses' && m.apiKey);
-  const anything = needsModel || edits.repaint.length;
-  $('tweak-go').disabled = !state.board.canRollback || !anything || state.buildId || (needsModel ? !hasModel : !hasImages);
-  $('tweak-status').textContent = anything && needsModel && !hasModel ? 'Add your model settings below to apply changes.'
-    : anything && !needsModel && !hasImages ? 'Repainting needs an OpenAI key for paintings (below).' : '';
+  $('tweak-go').disabled = Boolean(state.buildId || ed.chatting || (needsModel ? !hasModel : !hasImages));
+  $('tweak-status').textContent = needsModel && !hasModel ? 'Add your model key under Model settings to rebuild.'
+    : !needsModel && !hasImages ? 'Repainting needs an OpenAI key for paintings (Model settings).' : '';
+  $('chat-send').disabled = Boolean(ed.chatting || !hasModel);
+  $('chat-status').textContent = !hasModel ? 'Add your model key under Model settings to chat with the editor.' : '';
+  if (!hasModel) $('model-details').open = true;
 }
 
-$('board').addEventListener('input', updateTweak);
-$('board').addEventListener('change', updateTweak);
-$('tweak-message').addEventListener('input', updateTweak);
-$('tweak-from').addEventListener('change', updateTweak);
+// The owner's own edits.
+$('board').addEventListener('input', e => {
+  const el = e.target.closest('[data-path]');
+  if (!el) return;
+  setPath(ed.draft[el.dataset.doc], el.dataset.path, el.value);
+  el.classList.toggle('dirty', String(el.value) !== String(getPath(state.board[el.dataset.doc], el.dataset.path) ?? ''));
+  renderPending();
+});
+$('board').addEventListener('change', e => {
+  const box = e.target.closest('[data-repaint]');
+  if (box) { box.checked ? ed.repaint.add(box.dataset.repaint) : ed.repaint.delete(box.dataset.repaint); renderPending(); }
+});
+$('board').addEventListener('toggle', e => {
+  const key = e.target.dataset?.key;
+  if (key) e.target.open ? ed.open.add(key) : ed.open.delete(key);
+}, true);
+$('tweak-message').addEventListener('input', renderPending);
+$('tweak-from').addEventListener('change', renderPending);
+$('discard').addEventListener('click', () => {
+  if (!confirm('Discard all changes on the board that are not in the book yet?')) return;
+  resetDraft();
+  renderBoard();
+  renderPending();
+});
+
+// Show an edit where it happened: open its card and item, and flash the field.
+function showEdit(e) {
+  for (const key of keysFor(e.file, e.path)) ed.open.add(key);
+  renderBoard();
+  const fields = [...$('board').querySelectorAll(`[data-doc="${e.file}"]`)].filter(el => el.dataset.path === e.path || el.dataset.path.startsWith(`${e.path}.`));
+  const target = fields[0] || $('board').querySelector(`[data-key="${keysFor(e.file, e.path).at(-1)}"]`);
+  for (const el of fields) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+  target?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+$('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('chat-form').requestSubmit(); }
+});
+
+$('chat-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const text = $('chat-input').value.trim();
+  if (!text || ed.chatting) return;
+  const id = state.editing;
+  const m = modelSettings();
+  if ($('remember').checked) storage(s => s.setItem(SETTINGS_KEY, JSON.stringify(m)));
+  ed.chat.push({ role: 'user', text });
+  const reply = { role: 'assistant', text: '', edits: [] };
+  ed.chat.push(reply);
+  $('chat-input').value = '';
+  ed.chatting = true;
+  updateTweak();
+  renderChat();
+  const log = $('chat-log');
+  log.lastElementChild.classList.add('thinking');
+  const save = () => storage(s => s.setItem(chatKey(id), JSON.stringify(ed.chat.slice(-40).map(({ role, text, edits }) => ({ role, text, edits })))));
+  try {
+    const response = await fetch(`/api/stories/${id}/chat`, {
+      method: 'POST', credentials: 'same-origin', headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        messages: ed.chat.slice(0, -1).map(({ role, text }) => ({ role, text })),
+        brief: ed.draft.brief, script: ed.draft.script, notes: $('tweak-message').value, repaint: [...ed.repaint],
+        llm: { api: m.api, baseUrl: m.baseUrl, model: m.model, apiKey: m.apiKey },
+      }),
+    });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || `HTTP ${response.status}`);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      let end;
+      while ((end = pending.indexOf('\n')) !== -1) {
+        const line = pending.slice(0, end).trim();
+        pending = pending.slice(end + 1);
+        if (!line || state.editing !== id) continue;
+        const ev = JSON.parse(line);
+        if (ev.type === 'edit') {
+          setPath(ed.draft[ev.file], ev.path, ev.value, ev.op === 'remove');
+          reply.edits.push(ev);
+          showEdit(ev);
+        } else if (ev.type === 'text') {
+          reply.text = reply.text ? `${reply.text}\n\n${ev.text}` : ev.text;
+        } else if (ev.type === 'notes') {
+          $('tweak-message').value = ev.notes;
+          $('pending').querySelector('.rebuild-opts').open = true;
+        } else if (ev.type === 'repaint') {
+          ed.repaint = new Set(ev.ids);
+          renderBoard();
+        } else if (ev.type === 'done') {
+          if (ev.brief !== undefined && ev.script !== undefined) { ed.draft = { brief: ev.brief, script: ev.script }; renderBoard(); }
+        } else if (ev.type === 'error') {
+          reply.text = `${reply.text ? `${reply.text}\n\n` : ''}Something went wrong: ${ev.error}`;
+          reply.error = true;
+        }
+        if (['edit', 'text', 'error', 'notes', 'repaint'].includes(ev.type)) { renderChat(); log.lastElementChild?.classList.add('thinking'); renderPending(); }
+      }
+    }
+  } catch (error) {
+    reply.text = `Something went wrong: ${error.message}`;
+  }
+  if (!reply.text) reply.text = reply.edits.length ? 'Done.' : 'I did not change anything.';
+  ed.chatting = false;
+  save();
+  if (state.editing === id) { renderChat(); renderPending(); }
+});
 
 $('tweak-go').addEventListener('click', async () => {
   const id = state.editing;
-  const edits = boardEdits();
+  const c = changes();
   const m = modelSettings();
   if ($('remember').checked) storage(s => s.setItem(SETTINGS_KEY, JSON.stringify(m)));
   $('tweak-go').disabled = true;
+  const message = $('tweak-message').value.trim();
+  const asked = ed.chat.filter(x => x.role === 'user').slice(-6).map(x => x.text);
   const body = {
-    message: $('tweak-message').value.trim(), from: $('tweak-from').value || undefined,
-    brief: edits.brief || undefined, script: edits.script || undefined, repaint: edits.repaint,
+    message: message || (asked.length && c.total ? `Changes discussed with the editor: ${asked.join(' / ')}`.slice(0, 3900) : ''),
+    from: $('tweak-from').value || undefined,
+    brief: c.brief ? ed.draft.brief : undefined, script: c.script ? ed.draft.script : undefined, repaint: [...ed.repaint],
     llm: { api: m.api, baseUrl: m.baseUrl, model: m.model, apiKey: m.apiKey }, images: { apiKey: m.imageKey },
   };
-  $('tweak-message').value = '';
-  $('tweak-from').value = '';
+  ed.chat.push({ role: 'assistant', text: 'Rebuilding the book with these changes. Follow along below.' });
+  storage(s => s.setItem(chatKey(id), JSON.stringify(ed.chat.slice(-40))));
+  renderChat();
   await startStream(`/api/stories/${id}/tweaks`, body);
 });
 

@@ -2,10 +2,12 @@ import http from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { config } from './config.mjs';
+import { redact } from './pi_run.mjs';
 import { authenticate, identify, publicUser } from './auth.mjs';
 import { abortBuild, activeBuilds, archivedEvents, canFollow, getJob, startBuild } from './build.mjs';
 import { listStories } from './stories.mjs';
 import { getBoard, startTweak, startRollback } from './edit.mjs';
+import { runEditor } from './editor_agent.mjs';
 import { PROVIDERS, parseProviders, parseImagesOnly } from './providers.mjs';
 import { lookOptions, parseLook } from './looks.mjs';
 import { listTranscripts, readTranscript, renderTranscript, transcriptsZip } from './transcripts.mjs';
@@ -116,6 +118,34 @@ const server = http.createServer(async (req, res) => {
       const needsModel = Boolean(String(body.message || '').trim() || body.brief || body.script || body.from);
       const { llm, images } = needsModel ? parseProviders(body) : { llm: null, images: parseImagesOnly(body) };
       return streamJob(res, startTweak({ user, wasmerToken, id: tweak[1], body, llm, images }));
+    }
+
+    // Chat with the editor agent: it edits the (unsaved) mood board and streams each change.
+    const chat = path.match(/^\/api\/stories\/([0-9]{8}-[a-z0-9]{6})\/chat$/);
+    if (chat && req.method === 'POST') {
+      const body = await readJson(req);
+      const { user } = await authenticate(req, body);
+      if (!user.allowed) return send(res, 403, { error: `${user.username} is not on this app's allowlist` });
+      const board = getBoard(user, chat[1]);
+      if (!board.editable) return send(res, 409, { error: board.reason });
+      const { llm } = parseProviders(body);
+      const pick = (value, fallback) => value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
+      const docs = { brief: JSON.parse(JSON.stringify(pick(body.brief, board.brief))), script: JSON.parse(JSON.stringify(pick(body.script, board.script))) };
+      res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no' });
+      const controller = new AbortController();
+      res.on('close', () => { if (!res.writableEnded) controller.abort(); });
+      const write = event => { try { res.write(JSON.stringify(event) + '\n'); } catch {} };
+      const keepAlive = setInterval(() => write({ type: 'ping' }), 15000);
+      try {
+        await runEditor({ llm, docs, notes: String(body.notes || ''), repaint: Array.isArray(body.repaint) ? body.repaint : [], messages: body.messages, emit: write, signal: controller.signal });
+      } catch (error) {
+        write({ type: 'error', error: redact(error.message, [llm.apiKey]) });
+      } finally {
+        clearInterval(keepAlive);
+        llm.apiKey = null;
+        res.end();
+      }
+      return;
     }
 
     const rollback = path.match(/^\/api\/stories\/([0-9]{8}-[a-z0-9]{6})\/rollback$/);
