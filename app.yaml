@@ -1,6 +1,6 @@
 kind: wasmer.io/App.v0
 name: auto-story
-owner: lorentz
+owner: baalimago
 package: .
 locality:
   regions:
