@@ -1,3 +1,8 @@
+
+// The deploy stamps each picture's content hash into index.html, so a repainted picture gets a new URL
+// and no browser or edge cache keeps serving the old picture (or an old 404).
+const artVersions = (() => { try { return JSON.parse(document.getElementById('art-versions')?.textContent || '{}'); } catch { return {}; } })();
+const artUrl = (id, ext) => `art/${id}.${ext || 'webp'}${artVersions[id] ? `?v=${artVersions[id]}` : ''}`;
 // Storybook engine. Story content lives in story.js, interactive scenes in scenes.js.
 import { mountWidget } from './widgets.js';
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -122,7 +127,7 @@ function renderPage(page, index, story) {
   }
 
   if (kind === 'cast') {
-    const portrait = c => c.art ? `<img class="portrait" src="art/${escape(c.art)}.${escape(story.artExtension || 'webp')}" alt="" loading="lazy" onerror="this.remove()">` : '';
+    const portrait = c => c.art ? `<img class="portrait" src="${escape(artUrl(c.art, story.artExtension))}" alt="" loading="lazy" onerror="this.remove()">` : '';
     const rows = (story.cast || []).map(c =>
       `<dt>${portrait(c)}${escape(c.name)}<small>${escape(c.is)}</small></dt><dd>${prose(c.explain)}</dd>`).join('');
     section.innerHTML = `<div class="sheet"><h2>${escape(page.title || 'Who is who')}</h2><dl>${rows}</dl>
@@ -134,7 +139,7 @@ function renderPage(page, index, story) {
   const art = node('div', { class: 'art' });
   if (page.art) {
     const img = node('img', { alt: page.alt || '', decoding: 'async', loading: index < 2 ? 'eager' : 'lazy' });
-    img.src = `art/${page.art}.${story.artExtension || 'webp'}`;
+    img.src = artUrl(page.art, story.artExtension);
     img.onerror = () => { img.remove(); art.classList.add('fallback'); };
     art.appendChild(img);
   } else {
@@ -237,7 +242,7 @@ async function main() {
       try { scenes[page.scene](handle.api); } catch (error) { console.error(`Scene ${page.scene} failed`, error); }
     }
     const nextArt = pages[index + 1]?.art;
-    if (nextArt) new Image().src = `art/${nextArt}.${story.artExtension || 'webp'}`;
+    if (nextArt) new Image().src = artUrl(nextArt, story.artExtension);
     bar.style.width = `${(index / Math.max(1, pages.length - 1)) * 100}%`;
     prevBtn.disabled = index === 0;
     nextBtn.disabled = index === pages.length - 1;

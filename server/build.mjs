@@ -1,9 +1,10 @@
 // One build: document -> parts -> brief (quizzed by an examiner) -> script (reviewed by a critic)
 // -> Pi-built storybook -> painted character sheets and backdrops -> new Wasmer Edge app.
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from './config.mjs';
+import { ENGINE_FILES } from '../agent/limits.mjs';
 import { redact } from './pi_run.mjs';
 import { listFiles, zipDirectory } from './zip.mjs';
 import { deployZip, waitLive } from './wasmer_api.mjs';
@@ -87,13 +88,57 @@ export async function deploySite({ siteDir, appName, owner, token, emit, signal,
   const missing = await missingPictures(siteDir, artMode);
   if (missing.length) throw new Error(`Not deploying: ${missing.length} picture${missing.length === 1 ? '' : 's'} the book shows ${missing.length === 1 ? 'is' : 'are'} missing (${missing.join(', ')})`);
   const files = listFiles(siteDir);
-  const zip = zipDirectory(siteDir, files);
+  const { overrides, versions } = packOverrides(siteDir, files);
+  const zip = zipDirectory(siteDir, files, overrides);
   emit({ stage: 'deploy', message: `Packed ${files.length} files` });
   const deployed = await deployZip({ zip, appName, owner, token, onEvent: emit, signal });
   emit({ stage: 'deploy', message: `Waiting for ${deployed.url} to answer` });
   const live = await waitLive(deployed.url, deployed.versionId);
   if (!live) emit({ stage: 'deploy', level: 'warn', message: 'The app is deployed but not answering yet; it may need another minute' });
+  // Fetch one picture the way a reader would; a book that deploys but cannot show its pictures is not done.
+  const [id, v] = Object.entries(versions).find(([k]) => !k.startsWith('char-')) || Object.entries(versions)[0] || [];
+  if (live && id) {
+    const ext = existsSync(join(siteDir, 'art', `${id}.webp`)) ? 'webp' : 'svg';
+    const url = `${deployed.url.replace(/\/$/, '')}/art/${id}.${ext}?v=${v}`;
+    const ok = await pictureServed(url);
+    if (!ok) throw new Error(`Deployed, but ${url} is not served as a picture; the book's pictures are broken on the live site`);
+    emit({ stage: 'deploy', message: `Checked a live picture: art/${id}.${ext} is served` });
+  }
   return deployed;
+}
+
+// Pack the current engine (so older books pick up fixes like this one) and stamp every picture's content
+// hash into index.html, which book.js appends to picture URLs as ?v=. Changed pictures get new URLs.
+function packOverrides(siteDir, files) {
+  const overrides = {};
+  for (const file of ENGINE_FILES.filter(f => f !== 'index.html')) {
+    const fresh = join(config.agentDir, 'template', file);
+    if (existsSync(fresh) && files.includes(file)) overrides[file] = readFileSync(fresh);
+  }
+  const versions = {};
+  for (const file of files) {
+    const m = file.match(/^art\/([a-z0-9-]+)\.(webp|svg)$/);
+    if (m) versions[m[1]] = createHash('sha256').update(readFileSync(join(siteDir, file))).digest('hex').slice(0, 10);
+  }
+  if (files.includes('index.html')) {
+    const tag = `<script type="application/json" id="art-versions">${JSON.stringify(versions)}</script>`;
+    const html = readFileSync(join(siteDir, 'index.html'), 'utf8').replace(/<script type="application\/json" id="art-versions">[\s\S]*?<\/script>\n?/, '');
+    overrides['index.html'] = html.includes('</head>') ? html.replace('</head>', `  ${tag}\n</head>`) : `${tag}\n${html}`;
+  }
+  return { overrides, versions };
+}
+
+async function pictureServed(url) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      const response = await fetch(url);
+      const type = response.headers.get('content-type') || '';
+      await response.arrayBuffer().catch(() => {});
+      if (response.ok && /^image\//.test(type)) return true;
+    } catch {}
+    await new Promise(r => setTimeout(r, 5000));
+  }
+  return false;
 }
 
 async function run(job, { user, title, filename, text, llm, images, wasmer, look, emit, archive }) {

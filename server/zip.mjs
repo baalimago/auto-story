@@ -25,8 +25,9 @@ export function listFiles(dir, root = dir) {
   return out.sort();
 }
 
-export function zipDirectory(dir, files = listFiles(dir)) {
-  return zipEntries(files.map(name => ({ name, data: readFileSync(join(dir, name)) })));
+// overrides maps a file name to the bytes to pack instead of the file on disk.
+export function zipDirectory(dir, files = listFiles(dir), overrides = {}) {
+  return zipEntries(files.map(name => ({ name, data: name in overrides ? Buffer.from(overrides[name]) : readFileSync(join(dir, name)) })));
 }
 
 // entries: [{ name, data: Buffer | string }]

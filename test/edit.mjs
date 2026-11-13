@@ -120,14 +120,15 @@ await new Promise(ok => imageApi.listen(0, ok));
 const users = { 'wap_alice_token_0000000000': { id: 'VXNlcjox', username: 'alice' }, 'wap_bob_token_00000000000000': { id: 'VXNlcjoy', username: 'bob' } };
 const deploys = [];
 let reg;
+const artChecks = [];
 const registry = createServer((req, res) => {
   let body = '';
   req.on('data', c => { body += c; });
   req.on('end', () => {
     const base = `http://127.0.0.1:${reg.address().port}`;
     res.setHeader('content-type', 'application/json');
-    if (req.method === 'PUT') { deploys.push({ size: body.length }); return res.end('{}'); }
-    if (req.url.startsWith('/app/')) { res.setHeader('x-edge-app-version-id', `v${deploys.length}`); return res.end('{}'); }
+    if (req.method === 'PUT') { deploys.push({ size: body.length, stamped: /id="art-versions">{"[a-z0-9-]+":"[0-9a-f]{10}"/.test(body), engine: body.includes('const artUrl = ') }); return res.end('{}'); }
+    if (req.url.startsWith('/app/')) { res.setHeader('x-edge-app-version-id', `v${deploys.length}`); if (/\/art\/[^?]+\.webp\?v=/.test(req.url)) { artChecks.push(req.url); res.setHeader('content-type', 'image/webp'); return res.end('img'); } return res.end('{}'); }
     const { query, variables } = JSON.parse(body || '{}');
     const token = String(req.headers.authorization || '').replace(/^Bearer /, '');
     let data;
@@ -244,6 +245,8 @@ model.close();
 // 6. Roll back to version 1.
 r = await call(`/api/stories/${job.id}/rollback`, alice, { version: 1 });
 expect('rollback finishes', r.end.stage === 'done', JSON.stringify(r.end));
+expect('deploys stamp picture versions and pack the current engine', deploys.length > 1 && deploys.every(d => d.stamped && d.engine), JSON.stringify(deploys));
+expect('each deploy fetches a live picture', artChecks.length >= deploys.length, artChecks.join(','));
 board = (await call(`/api/stories/${job.id}/board`, alice)).json;
 const last = board.versions[0];
 expect('versions so far: build, 2 tweaks, repaint, rollback', board.versions.length === 5, board.versions.length);
