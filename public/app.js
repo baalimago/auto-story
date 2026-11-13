@@ -294,6 +294,31 @@ $('pasted').addEventListener('input', e => {
 });
 
 // Build progress.
+// Click a phase above the log to show only its rows; click it again (or another) to switch back.
+// Rows from the end of a run (done, failed) show under every filter.
+let logFilter = null;
+const PHASE_ALIAS = { upload: 'deploy', failed: 'done' };
+function phaseOf(event) {
+  const stage = event.stage in PHASE_ALIAS ? PHASE_ALIAS[event.stage] : event.stage;
+  return STAGES.includes(stage) ? stage : 'other';
+}
+const shownIn = (phase, filter) => phase === filter || phase === 'done';
+function setLogFilter(phase) {
+  logFilter = logFilter === phase ? null : phase;
+  document.querySelectorAll('.stages li').forEach(li => li.classList.toggle('filtering', li.dataset.stage === logFilter));
+  $('progress').classList.toggle('log-filtered', Boolean(logFilter));
+  for (const li of $('log').children) li.hidden = Boolean(logFilter) && !shownIn(li.dataset.phase, logFilter);
+  const log = $('log');
+  log.scrollTop = log.scrollHeight;
+}
+document.querySelectorAll('.stages li').forEach(li => {
+  li.tabIndex = 0;
+  li.setAttribute('role', 'button');
+  li.title = 'Show only this phase in the agent log';
+  li.addEventListener('click', () => setLogFilter(li.dataset.stage));
+  li.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLogFilter(li.dataset.stage); } });
+});
+
 function markStage(stage, failed = false) {
   const index = STAGES.indexOf(stage);
   if (index < 0) return;
@@ -353,6 +378,8 @@ function logEvent(event) {
     closeLiveRow(event.at);
     if (!['done', 'failed'].includes(event.stage)) li.classList.add('live');
   }
+  li.dataset.phase = phaseOf(event);
+  li.hidden = Boolean(logFilter) && !shownIn(li.dataset.phase, logFilter);
   const log = $('log');
   const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
   log.appendChild(li);
@@ -421,6 +448,7 @@ function resetProgress() {
   $('progress').hidden = false;
   $('result').hidden = true;
   $('log').innerHTML = '';
+  if (logFilter) setLogFilter(logFilter);
   seenEvents.clear();
   $('usage').textContent = '';
   $('abort').disabled = false;

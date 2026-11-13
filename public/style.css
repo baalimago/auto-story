@@ -111,6 +111,10 @@ main { max-width: 980px; margin: 0 auto; padding: 0 16px 60px; }
 }
 .stages li.active { color: var(--ink); border-color: var(--line); background: color-mix(in srgb, var(--wash) 45%, transparent); animation: breathe 1.8s ease-in-out infinite; }
 .stages li.done { color: var(--ink); border-color: transparent; background: color-mix(in srgb, var(--moss) 45%, transparent); }
+.stages li { cursor: pointer; }
+.stages li:hover, .stages li:focus-visible { border-color: var(--line); outline: none; }
+.stages li.filtering { box-shadow: 0 0 0 2px var(--ink); }
+.log-filtered .log-head > span:first-child::after { content: ' · filtered (click the phase again to show all)'; text-transform: none; letter-spacing: 0; }
 .stages li.failed { color: #fff; background: var(--danger); border-color: var(--danger); }
 @keyframes breathe { 50% { background: color-mix(in srgb, var(--wash) 20%, transparent); } }
 
