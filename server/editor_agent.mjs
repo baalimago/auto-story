@@ -147,7 +147,7 @@ function completions(llm, system, history, signal) {
   return { call, results: results => messages.push(...results.map(r => ({ role: 'tool', tool_call_id: r.id, content: r.output }))) };
 }
 
-const CLIENTS = { 'anthropic-messages': anthropic, 'openai-responses': responses, 'openai-completions': completions };
+const CLIENTS = { 'anthropic-messages': anthropic, 'openai-responses': responses, 'openai-completions': completions, openrouter: completions };
 
 function systemPrompt(docs, extra) {
   const prompt = readFileSync(join(config.agentDir, 'prompts', 'editor.md'), 'utf8');

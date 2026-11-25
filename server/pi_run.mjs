@@ -9,6 +9,13 @@ import { terminateChild } from './terminate_child.mjs';
 const MAX_EVENT_TEXT = 4000;
 const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024;
 
+// Pi reads the key from the env var its provider declares, and OpenRouter has its own.
+function keyEnv({ api, apiKey }) {
+  if (api === 'anthropic-messages') return { ANTHROPIC_API_KEY: apiKey };
+  if (api === 'openrouter') return { OPENROUTER_API_KEY: apiKey };
+  return { OPENAI_API_KEY: apiKey };
+}
+
 export function redact(text, extra = []) {
   let out = String(text);
   for (const secret of extra.filter(v => v && v.length > 8)) out = out.split(secret).join('[REDACTED]');
@@ -39,7 +46,7 @@ export function runPi({ workDir, systemPath, inputPath, transcriptPath, onEvent,
     PI_MODEL: llm.model,
     PI_BASE_URL: llm.baseUrl || '',
     AGENT_DIR: config.agentDir,
-    [llm.api === 'anthropic-messages' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY']: llm.apiKey,
+    ...keyEnv(llm),
     ...(existsSync('/etc/ssl/certs') ? { SSL_CERT_DIR: '/etc/ssl/certs' } : {}),
     ...(existsSync('/etc/ssl/certs/ca-bundle.crt') ? { SSL_CERT_FILE: '/etc/ssl/certs/ca-bundle.crt' } : {}),
     ...(process.env.SSL_CERT_FILE && !existsSync('/etc/ssl/certs/ca-bundle.crt') ? { SSL_CERT_FILE: process.env.SSL_CERT_FILE } : {}),

@@ -159,6 +159,7 @@ Each build uses the builder's own model settings from the **Model** panel:
 | Anthropic Messages | `https://api.anthropic.com` | `claude-opus-5-5` | `ANTHROPIC_API_KEY` |
 | OpenAI Responses | `https://api.openai.com/v1` | `gpt-6-luna` | `OPENAI_API_KEY` |
 | OpenAI-compatible Chat Completions | required | required | `OPENAI_API_KEY` |
+| OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-6-luna`, and the field suggests every model that calls tools | `OPENROUTER_API_KEY` |
 
 Unknown model ids and custom endpoints borrow Pi's metadata from a model
 of the same API (`pi_entry.mjs`). The key travels in the build request,
@@ -167,6 +168,45 @@ painter, and is redacted from every event. The OpenAI Responses key is
 reused for paintings; other APIs take an optional OpenAI key for
 paintings, and without one Pi draws SVG backdrops. "Remember these on
 this device" stores the settings in the browser's localStorage.
+
+**Log in with OpenRouter.** The button in the Model panel opens
+OpenRouter's consent screen with a PKCE challenge, generated in this tab,
+so the tab never loses its document and the verifier never enters a URL. A
+cross-origin hop disowns `window.opener`, so the callback page
+(`public/openrouter.html`) announces the code on a BroadcastChannel, tagged
+with the attempt id that OpenRouter returns as `state`, and this tab
+exchanges it: `POST /api/openrouter/key` (`server/openrouter.mjs`) trades
+code and verifier for the visitor's own user-controlled key; the form
+switches to OpenRouter and its API key field takes the key. A refused
+consent comes back without `state`, so the note shows OpenRouter's reason
+instead. `GET /api/openrouter/models` lists what the visitor can pick (one
+hour cache). The model field starts at `openai/gpt-6-luna`; if OpenRouter
+drops it, the first listed model takes its place, but a model the visitor
+typed or saved stays.
+
+OpenRouter mints a long-lived API key instead of a refreshable token, so there
+is nothing to refresh, and the key lives as long as its own expiry allows.
+The consent screen is asked for a key that expires after one year
+(`OPENROUTER_KEY_LIFETIME`), which the visitor can shorten there. The key is
+handled like any other: this tab keeps a copy in sessionStorage so a reload
+does not sign in again, and "Remember these on this device" stores it in
+localStorage for the next visit. Sign in again when OpenRouter reports that
+the key expired, or revoke it at `openrouter.ai/keys`.
+
+A form that opens with an OpenRouter key asks `POST
+/api/openrouter/key/status` (`server/openrouter.mjs`) how that key stands, and
+the note above the key field says when it has expired, is out of credit, or is
+no longer accepted. That saves a build that would fail on its first request.
+
+Pi has OpenRouter in its own catalogue, so it keeps each model's metadata
+and the transport that model speaks (`/v1/messages` for Claude,
+`/v1/chat/completions` for the rest); unknown ids borrow Chat Completions.
+The editor agent, which runs the chat and tweak flows, speaks Chat
+Completions only; OpenRouter normalises that for every model it lists. The
+base URL is not the request's to choose: `parseProviders` pins OpenRouter's
+own (`server/providers.mjs`), so a key never travels to a host that a
+request names. OpenRouter does not paint, so paintings still take the
+separate OpenAI key, or Pi draws SVG.
 
 This is deliberately trusting: the backend sees the keys, and so could a
 malicious document that talks Pi into printing its environment.

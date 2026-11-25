@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>OpenRouter sign-in</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { margin: 0; display: grid; place-items: center; min-height: 100vh; font: 16px/1.5 system-ui, sans-serif; color: #40342a; background: #fbf6ec; text-align: center; }
+    p { max-width: 26rem; padding: 1rem; }
+  </style>
+</head>
+<body>
+  <p id="state">Finishing the OpenRouter sign-in…</p>
+  <script>
+    // The tab that opened this window holds the PKCE verifier and exchanges the code. COOP severs
+    // window.opener on the cross-origin hop, so the code travels over a BroadcastChannel instead.
+    const query = new URLSearchParams(location.search);
+    const code = query.get('code');
+    const error = query.get('error_description') || query.get('error');
+    const state = document.getElementById('state');
+    if (!code && !error) state.textContent = 'Open this page from Auto Story to sign in to OpenRouter.';
+    else if (typeof BroadcastChannel !== 'function') state.textContent = 'This browser cannot return the sign-in to Auto Story.';
+    else {
+      new BroadcastChannel('auto-story-openrouter').postMessage({ code, error, state: query.get('state') });
+      state.textContent = error ? `OpenRouter said: ${error}` : 'You are signed in. Go back to Auto Story; this window closes.';
+      if (!error) setTimeout(() => window.close(), 1000);
+    }
+  </script>
+</body>
+</html>

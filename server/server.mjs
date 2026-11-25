@@ -8,6 +8,7 @@ import { abortBuild, activeBuilds, archivedEvents, canFollow, getJob, startBuild
 import { listStories } from './stories.mjs';
 import { getBoard, startTweak, startRollback } from './edit.mjs';
 import { runEditor } from './editor_agent.mjs';
+import { exchangeCode, keyStatus, listModels } from './openrouter.mjs';
 import { PROVIDERS, parseProviders, parseImagesOnly } from './providers.mjs';
 import { lookOptions, parseLook } from './looks.mjs';
 import { listTranscripts, readTranscript, renderTranscript, transcriptsZip } from './transcripts.mjs';
@@ -84,6 +85,17 @@ const server = http.createServer(async (req, res) => {
     if (path === '/api/auth/token' && req.method === 'POST') {
       return send(res, 200, { user: publicUser(await identify((await readJson(req)).token)) });
     }
+
+    // Log in with OpenRouter: the page sends the PKCE code it got back, and receives the visitor's own key.
+    if (path === '/api/openrouter/key' && req.method === 'POST') {
+      return send(res, 200, await exchangeCode(await readJson(req)));
+    }
+
+    if (path === '/api/openrouter/key/status' && req.method === 'POST') {
+      return send(res, 200, await keyStatus(await readJson(req)));
+    }
+
+    if (path === '/api/openrouter/models') return send(res, 200, { models: await listModels() });
 
     if (path === '/api/stories') {
       const { user } = await authenticate(req);

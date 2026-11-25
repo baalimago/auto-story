@@ -80,10 +80,12 @@
         </label>
         <label>Model
           <input id="llm-model" autocomplete="off" spellcheck="false">
+          <datalist id="llm-models"></datalist>
         </label>
         <label>API key
           <input id="llm-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
         </label>
+        <p class="note"><button id="openrouter" class="ghost small" type="button">Log in with OpenRouter</button> <span id="openrouter-note" class="status" role="status"></span></p>
         <label id="img-row">OpenAI key for paintings <small>(optional)</small>
           <input id="img-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
         </label>

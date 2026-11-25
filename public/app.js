@@ -223,7 +223,19 @@ function lookChanged() {
 
 // Model settings: the builder's own API, model, and key for each build.
 const SETTINGS_KEY = 'auto-story-model';
+// A key that "Log in with OpenRouter" minted behaves like any other key, but this tab keeps a copy so a
+// reload does not ask the visitor to sign in again.
+// https://openrouter.ai/docs/use-cases/oauth-pkce (2026-11-24)
+const OPENROUTER_KEY = 'auto-story-openrouter-key';
+const signedInKey = () => session(s => s.getItem(OPENROUTER_KEY)) || '';
 let modelReady = false;
+
+// One writer for the stored model settings, so the three flows that use them cannot drift apart.
+function saveModel(m) {
+  if (!$('remember').checked) return;
+  storage(s => s.setItem(SETTINGS_KEY, JSON.stringify(m)));
+}
+
 function setupModel() {
   if (modelReady) return;
   modelReady = true;
@@ -240,20 +252,138 @@ function setupModel() {
     $('img-model').value = saved.imageModel || '';
     $('remember').checked = true;
   } else {
-    select.value = 'anthropic-messages';
+    // A tab that remembers nothing still belongs to OpenRouter when it signed in: the session key is the sign-in.
+    select.value = signedInKey() ? 'openrouter' : 'anthropic-messages';
     applyPreset();
   }
+  if (select.value === 'openrouter' && !$('llm-key').value) $('llm-key').value = signedInKey();
   select.addEventListener('change', applyPreset);
+  if (select.value === 'openrouter') loadOpenRouterModels();
+  $('openrouter').addEventListener('click', signInWithOpenRouter);
   for (const id of ['llm-base', 'llm-model', 'llm-key', 'img-key', 'img-model']) $(id).addEventListener('input', modelChanged);
   $('remember').addEventListener('change', () => { if (!$('remember').checked) storage(s => s.removeItem(SETTINGS_KEY)); });
   modelChanged();
+  if (select.value === 'openrouter') checkOpenRouterKey($('llm-key').value);
 }
 
 function applyPreset() {
   const preset = state.me.providers[$('llm-api').value];
   $('llm-base').value = preset.baseUrl;
   $('llm-model').value = preset.model;
+  if ($('llm-api').value === 'openrouter') loadOpenRouterModels();
   modelChanged();
+}
+
+// OpenRouter's catalogue fills the model field's suggestions. The preset stays unless OpenRouter has
+// dropped it; a model the visitor typed or saved stays, listed or not.
+let openrouterCatalogue = null;
+function openrouterModels() {
+  openrouterCatalogue ??= api('/api/openrouter/models')
+    .then(body => { $('llm-models').innerHTML = body.models.map(id => `<option value="${escape(id)}"></option>`).join(''); return body.models; })
+    .catch(() => { openrouterCatalogue = null; return null; });
+  return openrouterCatalogue;
+}
+
+async function loadOpenRouterModels() {
+  const models = await openrouterModels();
+  const preset = state.me.providers.openrouter.model;
+  const field = $('llm-model');
+  if (!models || $('llm-api').value !== 'openrouter' || (field.value.trim() && field.value !== preset)) return;
+  const model = models.includes(preset) ? preset : models[0];
+  if (field.value === model) return;
+  field.value = model;
+  modelChanged();
+}
+
+// Log in with OpenRouter: PKCE runs in this tab, so the verifier never enters a URL and the dropped
+// document survives. COOP severs window.opener on the cross-origin hop, so the popup announces the
+// code on a BroadcastChannel instead; the attempt id in `state` says which sign-in it answers.
+const OPENROUTER_AUTH = 'https://openrouter.ai/auth';
+// The sign-in mints a long-lived API key, so ask OpenRouter to expire it. The visitor can change the
+// expiry on the consent screen. https://openrouter.ai/docs/use-cases/oauth-pkce (2026-11-24)
+const OPENROUTER_KEY_LIFETIME = '1-year';
+const openrouterChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('auto-story-openrouter') : null;
+let openrouterVerifier = '';
+let openrouterAttempt = '';
+let openrouterNoteTimer = null;
+
+const base64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+function openrouterNote(text, error = false) {
+  clearTimeout(openrouterNoteTimer);
+  const note = $('openrouter-note');
+  note.textContent = text;
+  note.classList.toggle('error', error);
+  if (!error) openrouterNoteTimer = setTimeout(() => { note.textContent = ''; }, 15000);
+}
+
+// A remembered key can expire or run out of credit between visits, which would only fail the next build.
+async function checkOpenRouterKey(key) {
+  if (!key) return;
+  try {
+    const status = await api('/api/openrouter/key/status', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key }),
+    });
+    // The visitor can replace the key while this is in flight; its answer is about that key, not this one.
+    if ($('llm-api').value !== 'openrouter' || $('llm-key').value.trim() !== key) return;
+    if (!status.ok) return openrouterNote('This OpenRouter key has expired or was revoked. Log in again.', true);
+    if (status.expired) return openrouterNote('This OpenRouter key has expired. Log in again.', true);
+    if (status.exhausted) return openrouterNote('This OpenRouter key is out of credit. Raise its limit on openrouter.ai.', true);
+  } catch {} // A probe that cannot reach OpenRouter must not block the form.
+}
+
+async function signInWithOpenRouter() {
+  if (!crypto?.subtle) return openrouterNote('OpenRouter sign-in needs a secure (https) page.', true);
+  if (!openrouterChannel) return openrouterNote('This browser cannot return the sign-in; paste a key instead.', true);
+  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
+  const attempt = base64url(crypto.getRandomValues(new Uint8Array(12)));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  const query = new URLSearchParams({
+    callback_url: `${location.origin}/openrouter.html`, code_challenge: base64url(new Uint8Array(digest)),
+    code_challenge_method: 'S256', key_label: 'Auto Story', expiration: OPENROUTER_KEY_LIFETIME, state: attempt,
+  });
+  const popup = window.open(`${OPENROUTER_AUTH}?${query}`, 'openrouter-signin', 'width=520,height=720');
+  if (!popup) return openrouterNote('Allow pop-ups for this site, then try again.', true);
+  openrouterVerifier = verifier;
+  openrouterAttempt = attempt;
+  openrouterNote('Waiting for OpenRouter…');
+  const watch = setInterval(() => {
+    if (!popup.closed) return;
+    clearInterval(watch);
+    if (openrouterAttempt !== attempt) return;
+    openrouterVerifier = '';
+    openrouterAttempt = '';
+    openrouterNote('The OpenRouter sign-in was closed.');
+  }, 1000);
+}
+
+// The callback tab announces the code; it arrives here, where the verifier is. The backend trades both for the key.
+openrouterChannel?.addEventListener('message', event => {
+  const message = event.data || {};
+  // OpenRouter leaves `state` out when the visitor denies, so an error without one is still this tab's.
+  if (!openrouterAttempt || (message.state ? message.state !== openrouterAttempt : !message.error)) return;
+  const verifier = openrouterVerifier;
+  openrouterVerifier = '';
+  openrouterAttempt = '';
+  if (message.error) return openrouterNote(message.error === 'access_denied' ? 'You refused the OpenRouter sign-in.' : `OpenRouter said: ${message.error}`, true);
+  if (verifier) exchangeOpenRouterCode(message.code, verifier);
+});
+
+async function exchangeOpenRouterCode(code, verifier) {
+  try {
+    const { key } = await api('/api/openrouter/key', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, verifier }),
+    });
+    session(s => s.setItem(OPENROUTER_KEY, key));
+    const switched = $('llm-api').value !== 'openrouter';
+    $('llm-api').value = 'openrouter';
+    $('llm-key').value = key;
+    if (switched) applyPreset();
+    const models = await openrouterModels();
+    modelChanged();
+    saveModel(modelSettings());
+    openrouterNote(`Signed in with OpenRouter.${models ? ' Pick another model from the list if you like.' : ''}`);
+  } catch (error) { openrouterNote(error.message, true); }
 }
 
 // With OpenAI's own API the model key paints too, and the paintings field is hidden. Drop whatever
@@ -272,6 +402,10 @@ function modelSettings() {
 function modelChanged() {
   const m = modelSettings();
   const reusesKey = reusesModelKey(m);
+  const field = $('llm-model');
+  if (m.api === 'openrouter') field.setAttribute('list', 'llm-models'); else field.removeAttribute('list');
+  // OpenRouter's base URL is the server's to set, so the field says so by staying out of reach.
+  $('llm-base').disabled = m.api === 'openrouter';
   $('img-row').hidden = reusesKey;
   const painted = (reusesKey && m.apiKey) || m.imageKey;
   $('art-note').textContent = painted
@@ -508,7 +642,7 @@ $('go').addEventListener('click', async () => {
   setStatus('');
   if ($('gate').classList.contains('welcome')) $('gate').hidden = true;
   const m = modelSettings();
-  if ($('remember').checked) storage(s => s.setItem(SETTINGS_KEY, JSON.stringify(m)));
+  saveModel(m);
   await startStream('/api/builds', {
     title: $('doc-title').value.trim() || state.doc.name, filename: state.doc.name, text: state.doc.text,
     look: lookSettings(),
@@ -916,7 +1050,7 @@ $('chat-form').addEventListener('submit', async e => {
   if (!text || ed.chatting) return;
   const id = state.editing;
   const m = modelSettings();
-  if ($('remember').checked) storage(s => s.setItem(SETTINGS_KEY, JSON.stringify(m)));
+  saveModel(m);
   ed.chat.push({ role: 'user', text });
   const reply = { role: 'assistant', text: '', edits: [] };
   ed.chat.push(reply);
@@ -984,7 +1118,7 @@ $('tweak-go').addEventListener('click', async () => {
   const id = state.editing;
   const c = changes();
   const m = modelSettings();
-  if ($('remember').checked) storage(s => s.setItem(SETTINGS_KEY, JSON.stringify(m)));
+  saveModel(m);
   $('tweak-go').disabled = true;
   const message = $('tweak-message').value.trim();
   const asked = ed.chat.filter(x => x.role === 'user').slice(-6).map(x => x.text);

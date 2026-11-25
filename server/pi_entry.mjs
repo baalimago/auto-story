@@ -63,19 +63,30 @@ session.subscribe(event => {
 });
 // Known models keep Pi's metadata; unknown ids and custom endpoints borrow a template of the same API.
 function resolveModel() {
-  const provider = api === 'anthropic-messages' ? 'anthropic' : 'openai';
+  // `openrouter` names a provider, not a transport: Pi's catalogue says which one each model speaks.
+  const provider = api === 'anthropic-messages' ? 'anthropic' : api === 'openrouter' ? 'openrouter' : 'openai';
   const known = modelRuntime.getModel(provider, modelId);
-  if (known && known.api === api && (!baseUrl || baseUrl === known.baseUrl)) return known;
+  // Pi lists some OpenRouter models under .../api and others under .../api/v1; both spellings are one endpoint.
+  const endpoint = url => String(url || '').replace(/\/v1$/, '');
+  const sameBase = !baseUrl || endpoint(baseUrl) === endpoint(known?.baseUrl);
+  if (known && sameBase && (api === 'openrouter' || known.api === api)) return known;
+  // OpenRouter speaks Chat Completions, so it borrows from the same models.
+  const completions = [['openai', 'gpt-4.1'], ['openai', 'gpt-4o']];
   const templates = {
     'anthropic-messages': [['anthropic', 'claude-opus-5-5'], ['anthropic', 'claude-sonnet-5']],
     'openai-responses': [['openai', 'gpt-6-luna'], ['openai', 'gpt-5.5']],
-    'openai-completions': [['openai', 'gpt-4.1'], ['openai', 'gpt-4o']],
+    'openai-completions': completions,
+    openrouter: completions,
   };
   if (!templates[api]) throw new Error(`Unsupported API ${api}`);
   const template = templates[api].map(([p, id]) => modelRuntime.getModel(p, id)).find(Boolean);
   if (!template) throw new Error(`Pi has no template model for ${api}`);
-  const model = { ...(known ?? template), id: modelId, name: modelId, api, provider, baseUrl: baseUrl || template.baseUrl };
-  if (api === 'openai-completions' && !known) {
+  // Every OpenRouter model answers Chat Completions, so an unknown id borrows that transport.
+  const transport = api === 'openrouter' ? known?.api ?? 'openai-completions' : api;
+  const base = baseUrl || known?.baseUrl || template.baseUrl;
+  // The Anthropic transport appends /v1/messages itself, so its base URL stops before /v1.
+  const model = { ...(known ?? template), id: modelId, name: modelId, api: transport, provider, baseUrl: transport === 'anthropic-messages' ? endpoint(base) : base };
+  if (transport === 'openai-completions' && !known) {
     Object.assign(model, { reasoning: false, compat: {} });
     delete model.thinkingLevelMap;
   }

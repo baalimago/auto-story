@@ -5,6 +5,7 @@ export const PROVIDERS = {
   'anthropic-messages': { label: 'Anthropic Messages API', baseUrl: 'https://api.anthropic.com', model: 'claude-opus-5-5' },
   'openai-responses': { label: 'OpenAI Responses API', baseUrl: 'https://api.openai.com/v1', model: 'gpt-6-luna' },
   'openai-completions': { label: 'OpenAI-compatible Chat Completions', baseUrl: '', model: '' },
+  openrouter: { label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-6-luna' },
 };
 const OPENAI_BASE = 'https://api.openai.com/v1';
 // Paintings go here; tests point it at a fake.
@@ -45,7 +46,10 @@ export function parseProviders(body = {}) {
     if (!preset) throw bad(`Choose one of: ${Object.keys(PROVIDERS).join(', ')}`);
     const model = String(input.model || preset.model).trim();
     if (!/^[A-Za-z0-9._:/@-]{1,120}$/.test(model)) throw bad('Model id is missing or invalid');
-    const baseUrl = cleanUrl(input.baseUrl || preset.baseUrl || (() => { throw bad('Base URL is required for this API'); })());
+    // OpenRouter is one service, so its base URL is not the client's to choose: a key must never travel
+    // to a host that the request names.
+    const wanted = api === 'openrouter' ? preset.baseUrl : input.baseUrl || preset.baseUrl || (() => { throw bad('Base URL is required for this API'); })();
+    const baseUrl = cleanUrl(wanted);
     llm = { api, model, baseUrl, apiKey };
   } else {
     throw bad('Paste an API key for the model');
